@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 
-// Load env vars (works both locally and on Railway)
+
 dotenv.config();
 dotenv.config({ path: ".env.local", override: true });
 
@@ -21,7 +21,7 @@ export async function connectDB() {
   if (mongoose.connection.readyState === 1) return;
 
   if (!mongoPromise) {
-    
+
     console.log("📡 Connecting to MongoDB...");
     mongoPromise = mongoose
       .connect(uri, { dbName })
