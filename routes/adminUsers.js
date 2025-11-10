@@ -1,17 +1,11 @@
+// routes/adminUsers.js
 import express from "express";
 import bcrypt from "bcryptjs";
-import User from "../models/User.js";
+import User from "../models/User.js"; // 👈 adjust path if your models folder is outside routes
 
 const router = express.Router();
 
-// OPTIONAL: If you have auth middleware, protect these routes
-// import { requireAdmin } from "../middleware/auth.js";
-// router.use(requireAdmin);
-
-/**
- * GET /api/admin/users
- * Return list of users for the admin table
- */
+// GET /api/admin/users
 router.get("/", async (req, res) => {
   try {
     const users = await User.find(
@@ -26,10 +20,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-/**
- * PUT /api/admin/users/:id
- * Update numeric totals (payments/freeplay/deposit/redeem)
- */
+// PUT /api/admin/users/:id
 router.put("/:id", async (req, res) => {
   try {
     const { totalPayments, totalFreeplay, totalDeposit, totalRedeem } =
@@ -46,32 +37,16 @@ router.put("/:id", async (req, res) => {
       new: true,
     });
 
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-    res.json({
-      _id: user._id,
-      username: user.username,
-      email: user.email,
-      lastSignInAt: user.lastSignInAt,
-      lastSignOutAt: user.lastSignOutAt,
-      totalPayments: user.totalPayments,
-      totalFreeplay: user.totalFreeplay,
-      totalDeposit: user.totalDeposit,
-      totalRedeem: user.totalRedeem,
-    });
+    res.json(user);
   } catch (err) {
     console.error("Error updating user totals:", err);
     res.status(500).json({ message: "Failed to update user" });
   }
 });
 
-/**
- * POST /api/admin/users/:id/reset-password
- * Reset user password to a new value
- * body: { newPassword: "..." }
- */
+// POST /api/admin/users/:id/reset-password
 router.post("/:id/reset-password", async (req, res) => {
   try {
     const { newPassword } = req.body;
@@ -91,9 +66,7 @@ router.post("/:id/reset-password", async (req, res) => {
       { new: true }
     );
 
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
+    if (!user) return res.status(404).json({ message: "User not found" });
 
     res.json({ message: "Password reset successfully" });
   } catch (err) {
