@@ -1,16 +1,17 @@
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 
-// OR: if you want to support both, but prefer .env.local, use override:
+// Load env vars (works both locally and on Railway)
+dotenv.config();
 dotenv.config({ path: ".env.local", override: true });
+
+mongoose.set("strictQuery", false);
 
 let mongoPromise = null;
 
 export async function connectDB() {
   const uri = process.env.MONGODB_URI;
   const dbName = process.env.MONGODB_DB || "coin";
-
-  console.log("DEBUG connectDB MONGODB_URI:", uri);
 
   if (!uri) {
     console.error("❌ MONGODB_URI is missing");
@@ -20,6 +21,7 @@ export async function connectDB() {
   if (mongoose.connection.readyState === 1) return;
 
   if (!mongoPromise) {
+    
     console.log("📡 Connecting to MongoDB...");
     mongoPromise = mongoose
       .connect(uri, { dbName })
@@ -28,7 +30,7 @@ export async function connectDB() {
         return conn;
       })
       .catch((err) => {
-        console.error("❌ MongoDB connection error in connectDB:", err);
+        console.error("❌ MongoDB connection error:", err);
         mongoPromise = null;
         throw err;
       });
