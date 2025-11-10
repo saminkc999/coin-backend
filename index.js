@@ -11,6 +11,7 @@ import loginRoutes from "./routes/logins.js";
 import statsRoutes from "./routes/stats.js";
 import healthRoutes from "./routes/health.js";
 import adminUserRoutes from "./routes/adminUsers.js";
+import loginRoutes from "./routes/logins.js";
 
 dotenv.config();
 
@@ -51,7 +52,7 @@ app.use("/api", loginRoutes);
 app.use("/api", statsRoutes);
 app.use("/api", healthRoutes);
 app.use("/api/admin/users", adminUserRoutes);
-
+app.use("/api", loginRoutes);
 // ✅ start server (Railway sets PORT automatically)
 const PORT = process.env.PORT || 5000;
 
