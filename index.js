@@ -6,6 +6,8 @@ import dotenv from "dotenv";
 // 🔐 Load env vars (prefer .env.local in dev, Railway uses real env vars)
 dotenv.config({ path: ".env.local", override: true });
 
+import { connectDB } from "./config/db.js"; // 👈 add this
+
 import authRoutes from "./routes/auth.js";
 import gameRoutes from "./routes/games.js";
 import paymentRoutes from "./routes/payments.js";
@@ -67,8 +69,19 @@ app.use("/api/admin/users", adminUserRoutes);
 // ✅ start server (Railway will set PORT)
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ Backend running on port ${PORT}`);
-});
+// 🔌 connect DB first, THEN listen
+async function startServer() {
+  try {
+    await connectDB(); // 👈 ensure MongoDB is ready
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`✅ Backend running on port ${PORT}`);
+    });
+  } catch (err) {
+    console.error("🚨 Failed to start server:", err.message || err);
+    process.exit(1); // optional, but good for Railway to restart if broken
+  }
+}
+
+startServer();
 
 export default app;

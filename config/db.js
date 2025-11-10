@@ -1,9 +1,5 @@
+// api/config/db.js
 import mongoose from "mongoose";
-import dotenv from "dotenv";
-
-
-dotenv.config();
-dotenv.config({ path: ".env.local", override: true });
 
 mongoose.set("strictQuery", false);
 
@@ -18,10 +14,10 @@ export async function connectDB() {
     throw new Error("MONGODB_URI not set");
   }
 
-  if (mongoose.connection.readyState === 1) return;
+  // already connected
+  if (mongoose.connection.readyState === 1) return mongoose.connection;
 
   if (!mongoPromise) {
-
     console.log("📡 Connecting to MongoDB...");
     mongoPromise = mongoose
       .connect(uri, { dbName })
@@ -36,5 +32,5 @@ export async function connectDB() {
       });
   }
 
-  await mongoPromise;
+  return mongoPromise;
 }
