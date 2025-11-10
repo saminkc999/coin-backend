@@ -1,132 +1,104 @@
 import express from "express";
 import bcrypt from "bcryptjs";
-
-import { connectDB } from "../config/db.js";
 import User from "../models/User.js";
-import LoginHistory from "../models/LoginHistory.js";
-import { requireAdmin } from "../middleware/requireAdmin.js";
 
 const router = express.Router();
 
-// all routes below require admin
-router.use(requireAdmin);
+// OPTIONAL: If you have auth middleware, protect these routes
+// import { requireAdmin } from "../middleware/auth.js";
+// router.use(requireAdmin);
 
 /**
- * PUT /api/admin/users/:id
- * Body: { name, email }
+ * GET /api/admin/users
+ * Return list of users for the admin table
  */
-router.put("/:id", async (req, res) => {
+router.get("/", async (req, res) => {
   try {
-    await connectDB();
+    const users = await User.find(
+      {},
+      "username email lastSignInAt lastSignOutAt totalPayments totalFreeplay totalDeposit totalRedeem"
+    ).sort({ createdAt: -1 });
 
-    const { id } = req.params;
-    const { name, email } = req.body;
-
-    if (!name || !email) {
-      return res.status(400).json({
-        message: "Name and email are required",
-      });
-    }
-
-    const normalizedEmail = String(email).toLowerCase().trim();
-
-    // ensure email not taken by another user
-    const existing = await User.findOne({
-      _id: { $ne: id },
-      email: normalizedEmail,
-    });
-    if (existing) {
-      return res
-        .status(409)
-        .json({ message: "Another user already uses that email" });
-    }
-
-    const user = await User.findById(id);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    user.name = name.trim();
-    user.email = normalizedEmail;
-    await user.save();
-
-    res.json({
-      message: "User updated",
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        isAdmin: user.isAdmin,
-      },
-    });
+    res.json(users);
   } catch (err) {
-    console.error("Admin update user error:", err);
-    res
-      .status(500)
-      .json({ message: "Failed to update user", error: err.message });
+    console.error("Error fetching users:", err);
+    res.status(500).json({ message: "Failed to fetch users" });
   }
 });
 
 /**
- * DELETE /api/admin/users/:id
- * Deletes user and their login history
+ * PUT /api/admin/users/:id
+ * Update numeric totals (payments/freeplay/deposit/redeem)
  */
-router.delete("/:id", async (req, res) => {
+router.put("/:id", async (req, res) => {
   try {
-    await connectDB();
+    const { totalPayments, totalFreeplay, totalDeposit, totalRedeem } =
+      req.body;
 
-    const { id } = req.params;
+    const update = {
+      totalPayments: Number(totalPayments) || 0,
+      totalFreeplay: Number(totalFreeplay) || 0,
+      totalDeposit: Number(totalDeposit) || 0,
+      totalRedeem: Number(totalRedeem) || 0,
+    };
 
-    const user = await User.findByIdAndDelete(id);
+    const user = await User.findByIdAndUpdate(req.params.id, update, {
+      new: true,
+    });
+
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // optional: clean up login history
-    await LoginHistory.deleteMany({ userId: id });
-
-    res.json({ message: "User deleted" });
+    res.json({
+      _id: user._id,
+      username: user.username,
+      email: user.email,
+      lastSignInAt: user.lastSignInAt,
+      lastSignOutAt: user.lastSignOutAt,
+      totalPayments: user.totalPayments,
+      totalFreeplay: user.totalFreeplay,
+      totalDeposit: user.totalDeposit,
+      totalRedeem: user.totalRedeem,
+    });
   } catch (err) {
-    console.error("Admin delete user error:", err);
-    res
-      .status(500)
-      .json({ message: "Failed to delete user", error: err.message });
+    console.error("Error updating user totals:", err);
+    res.status(500).json({ message: "Failed to update user" });
   }
 });
 
 /**
  * POST /api/admin/users/:id/reset-password
- * Body: { newPassword }
+ * Reset user password to a new value
+ * body: { newPassword: "..." }
  */
 router.post("/:id/reset-password", async (req, res) => {
   try {
-    await connectDB();
-
-    const { id } = req.params;
     const { newPassword } = req.body;
 
-    if (!newPassword || String(newPassword).length < 6) {
+    if (!newPassword || newPassword.length < 6) {
       return res
         .status(400)
         .json({ message: "Password must be at least 6 characters" });
     }
 
-    const user = await User.findById(id);
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(newPassword, salt);
+
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { passwordHash },
+      { new: true }
+    );
+
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    const passwordHash = await bcrypt.hash(String(newPassword), 10);
-    user.passwordHash = passwordHash;
-    await user.save();
-
     res.json({ message: "Password reset successfully" });
   } catch (err) {
-    console.error("Admin reset password error:", err);
-    res
-      .status(500)
-      .json({ message: "Failed to reset password", error: err.message });
+    console.error("Error resetting password:", err);
+    res.status(500).json({ message: "Failed to reset password" });
   }
 });
 

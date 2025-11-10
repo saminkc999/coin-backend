@@ -1,9 +1,8 @@
-// backend/models/User.js
 import mongoose from "mongoose";
 
 const userSchema = new mongoose.Schema(
   {
-    name: {
+    username: {
       type: String,
       required: true,
       trim: true,
@@ -15,26 +14,42 @@ const userSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
     },
+
+    // Password hash (bcrypt)
     passwordHash: {
       type: String,
       required: true,
     },
+
     role: {
       type: String,
       enum: ["user", "admin"],
       default: "user",
     },
-    isAdmin: {
-      type: Boolean,
-      default: false,
+
+    // For your table
+    lastSignInAt: { type: Date },
+    lastSignOutAt: { type: Date },
+
+    totalPayments: {
+      type: Number,
+      default: 0,
+    },
+    totalFreeplay: {
+      type: Number,
+      default: 0,
+    },
+    totalDeposit: {
+      type: Number,
+      default: 0,
+    },
+    totalRedeem: {
+      type: Number,
+      default: 0,
     },
   },
-  {
-    timestamps: true, // adds createdAt + updatedAt
-  }
+  { timestamps: true }
 );
 
-// Prevent model re-registration in dev hot-reload
-const User = mongoose.models.User || mongoose.model("User", userSchema);
-
+const User = mongoose.model("User", userSchema);
 export default User;

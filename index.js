@@ -52,7 +52,7 @@ app.use("/api", loginRoutes);
 app.use("/api", statsRoutes);
 app.use("/api", healthRoutes);
 app.use("/api/admin/users", adminUserRoutes);
-app.use("/api", loginRoutes);
+
 // ✅ start server (Railway sets PORT automatically)
 const PORT = process.env.PORT || 5000;
 
@@ -67,7 +67,5 @@ async function startServer() {
     process.exit(1);
   }
 }
-
-startServer();
 
 export default app;
