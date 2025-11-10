@@ -1,4 +1,3 @@
-// api/index.js
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -11,20 +10,18 @@ import loginRoutes from "./routes/logins.js";
 import statsRoutes from "./routes/stats.js";
 import healthRoutes from "./routes/health.js";
 import adminUserRoutes from "./routes/adminUsers.js";
-import { ensureAdminUser } from "./utils/admin.js";
 
 dotenv.config();
 
 const app = express();
 
-// 🌍 Allowed frontend origins
 const FRONTEND_ORIGIN =
   process.env.FRONTEND_ORIGIN || "https://coin-frontend.vercel.app";
 
 const allowedOrigins = [
-  "http://localhost:5173", // local dev
-  "http://localhost:3000", // CRA dev
-  FRONTEND_ORIGIN, // deployed frontend
+  "http://localhost:5173",
+  "http://localhost:3000",
+  FRONTEND_ORIGIN,
 ];
 
 // ✅ CORS
@@ -35,16 +32,19 @@ app.use(
   })
 );
 
-// ✅ JSON body parsing
+// ✅ JSON
 app.use(express.json());
 
-// ✅ global logger
-app.use((req, res, next) => {
+// ✅ Log requests
+app.use((req, _res, next) => {
   console.log("📥", req.method, req.url);
   next();
 });
 
-// ✅ mount routes
+// ✅ Health route for Railway test
+app.get("/", (_req, res) => res.send("✅ API is running"));
+
+// ✅ Mount routes
 app.use("/api/auth", authRoutes);
 app.use("/api", gameRoutes);
 app.use("/api", paymentRoutes);
@@ -53,13 +53,12 @@ app.use("/api", statsRoutes);
 app.use("/api", healthRoutes);
 app.use("/api/admin/users", adminUserRoutes);
 
-// ✅ start server (Railway sets PORT automatically)
+// ✅ Start server
 const PORT = process.env.PORT || 5000;
 
 async function startServer() {
   try {
     await connectDB();
-    await ensureAdminUser();
     app.listen(PORT, "0.0.0.0", () =>
       console.log(`✅ Backend running on port ${PORT}`)
     );
@@ -68,6 +67,5 @@ async function startServer() {
     process.exit(1);
   }
 }
-startServer(); // 👈 make sure you actually call it
 
-export default app;
+startServer();
