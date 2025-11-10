@@ -2,10 +2,7 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-
-dotenv.config();
-
-import { connectDB } from "./config/db.js"; // 👈 add this
+import { connectDB } from "./config/db.js";
 
 import authRoutes from "./routes/auth.js";
 import gameRoutes from "./routes/games.js";
@@ -15,34 +12,24 @@ import statsRoutes from "./routes/stats.js";
 import healthRoutes from "./routes/health.js";
 import adminUserRoutes from "./routes/adminUsers.js";
 
+dotenv.config();
+
 const app = express();
 
 // 🌍 Allowed frontend origins
-// - FRONTEND_ORIGIN: your deployed Vercel frontend
-// - Local dev: Vite (5173) and Vercel dev (3000)
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN; // e.g. https://coin-frontend.vercel.app
+const FRONTEND_ORIGIN =
+  process.env.FRONTEND_ORIGIN || "https://coin-frontend.vercel.app";
 
 const allowedOrigins = [
-  "http://localhost:5173", // Vite dev
-  "http://localhost:3000", // vercel dev / CRA dev
+  "http://localhost:5173", // local dev
+  "http://localhost:3000", // CRA dev
+  FRONTEND_ORIGIN, // deployed frontend
 ];
 
-if (FRONTEND_ORIGIN) {
-  allowedOrigins.push(FRONTEND_ORIGIN);
-}
-
-// ✅ CORS config (only once)
+// ✅ CORS
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // allow mobile apps / curl / Postman (no origin)
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) return callback(null, true);
-      console.warn("❌ CORS blocked origin:", origin);
-      return callback(new Error("Not allowed by CORS"));
-    },
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    origin: allowedOrigins,
     credentials: true,
   })
 );
@@ -56,7 +43,7 @@ app.use((req, res, next) => {
   next();
 });
 
-//  ✅ mount routes
+// ✅ mount routes
 app.use("/api/auth", authRoutes);
 app.use("/api", gameRoutes);
 app.use("/api", paymentRoutes);
@@ -65,19 +52,18 @@ app.use("/api", statsRoutes);
 app.use("/api", healthRoutes);
 app.use("/api/admin/users", adminUserRoutes);
 
-// ✅ start server (Railway will set PORT)
+// ✅ start server (Railway sets PORT automatically)
 const PORT = process.env.PORT || 5000;
 
-// 🔌 connect DB first, THEN listen
 async function startServer() {
   try {
-    await connectDB(); // 👈 ensure MongoDB is ready
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`✅ Backend running on port ${PORT}`);
-    });
+    await connectDB();
+    app.listen(PORT, "0.0.0.0", () =>
+      console.log(`✅ Backend running on port ${PORT}`)
+    );
   } catch (err) {
     console.error("🚨 Failed to start server:", err.message || err);
-    process.exit(1); // optional, but good for Railway to restart if broken
+    process.exit(1);
   }
 }
 
