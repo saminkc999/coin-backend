@@ -10,6 +10,7 @@ import loginRoutes from "./routes/logins.js";
 import statsRoutes from "./routes/stats.js";
 import healthRoutes from "./routes/health.js";
 import adminUserRoutes from "./routes/adminUsers.js";
+import facebookLeadRoutes from "./routes/facebookLeads.js";
 
 if (process.env.NODE_ENV !== "production") {
   dotenv.config(); // local dev only
@@ -18,8 +19,7 @@ if (process.env.NODE_ENV !== "production") {
 const app = express();
 
 const FRONTEND_ORIGIN =
-  process.env.FRONTEND_ORIGIN || "https://coin-delta-eight.vercel.app"
-
+  process.env.FRONTEND_ORIGIN || "https://coin-delta-eight.vercel.app";
 
 const allowedOrigins = [
   "http://localhost:5173",
@@ -55,7 +55,7 @@ app.use("/api", loginRoutes);
 app.use("/api", statsRoutes);
 app.use("/api", healthRoutes);
 app.use("/api/admin/users", adminUserRoutes);
-
+app.use("/api/facebook-leads", facebookLeadRoutes);
 // ✅ Start server
 const PORT = process.env.PORT || 5000;
 

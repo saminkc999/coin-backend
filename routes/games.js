@@ -7,6 +7,18 @@ import { safeNum } from "../utils/numbers.js";
 
 const router = express.Router();
 
+/**
+ * NOTE:
+ * If you mount this router as:
+ *   app.use("/api", gameRoutes)
+ * then these routes will be:
+ *   GET    /api/games
+ *   POST   /api/games
+ *   PUT    /api/games/:id
+ *   DELETE /api/games/:id
+ *   POST   /api/games/:id/add-moves
+ */
+
 // GET /api/games
 router.get("/games", async (_, res) => {
   try {
@@ -19,14 +31,13 @@ router.get("/games", async (_, res) => {
   }
 });
 
-// POST /api/games
+// POST /api/games  (create new game)
 router.post("/games", async (req, res) => {
   const {
     name,
     coinsSpent = 0,
     coinsEarned = 0,
     coinsRecharged = 0,
-    totalCoins = 0, // 👈 optional on create
   } = req.body;
 
   if (!name || typeof name !== "string") {
@@ -42,7 +53,7 @@ router.post("/games", async (req, res) => {
       coinsSpent,
       coinsEarned,
       coinsRecharged,
-      totalCoins,
+      // totalCoins will be auto-calculated in GameSchema.pre("save")
     });
 
     res.status(201).json(newGame);
@@ -60,7 +71,7 @@ router.put("/games/:id", async (req, res) => {
     coinsEarned,
     coinsRecharged,
     lastRechargeDate,
-    totalCoins,
+    // totalCoins is intentionally ignored; model recalculates it
   } = req.body;
 
   try {
@@ -73,10 +84,12 @@ router.put("/games/:id", async (req, res) => {
     if (typeof coinsEarned === "number") game.coinsEarned = coinsEarned;
     if (typeof coinsRecharged === "number")
       game.coinsRecharged = coinsRecharged;
-    if (typeof totalCoins === "number") game.totalCoins = totalCoins;
-    if (lastRechargeDate !== undefined)
-      game.lastRechargeDate = lastRechargeDate;
 
+    if (lastRechargeDate !== undefined) {
+      game.lastRechargeDate = lastRechargeDate;
+    }
+
+    // totalCoins will be recalculated in pre("save")
     await game.save();
 
     res.json(game);
@@ -110,7 +123,7 @@ router.post("/games/:id/add-moves", async (req, res) => {
     freeplayDelta = 0, // coinsEarned +
     redeemDelta = 0, // coinsSpent +
     depositDelta = 0, // coinsRecharged +
-    totalCoins, // 👈 from frontend (UserRowEdit)
+    // totalCoins is NOT trusted from frontend anymore
     username = "Unknown User",
   } = req.body;
 
@@ -126,19 +139,21 @@ router.post("/games/:id/add-moves", async (req, res) => {
     const redeem = safeNum(redeemDelta);
     const deposit = safeNum(depositDelta);
 
-    // Update game totals
+    // Update game totals (history)
     game.coinsEarned = safeNum(game.coinsEarned) + freeplay;
     game.coinsSpent = safeNum(game.coinsSpent) + redeem;
     game.coinsRecharged = safeNum(game.coinsRecharged) + deposit;
 
-    // totalCoins: prefer frontend value, else recalc
-    if (typeof totalCoins === "number") {
-      game.totalCoins = totalCoins;
-    } else {
-      const raw = game.coinsSpent - (game.coinsEarned + game.coinsRecharged);
-      game.totalCoins = Math.abs(raw);
+    // If there's a deposit, update lastRechargeDate as "YYYY-MM-DD"
+    if (deposit > 0) {
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, "0");
+      const dd = String(now.getDate()).padStart(2, "0");
+      game.lastRechargeDate = `${yyyy}-${mm}-${dd}`;
     }
 
+    // totalCoins will be recalculated in GameSchema.pre("save")
     await game.save();
 
     // Log user activity for charts

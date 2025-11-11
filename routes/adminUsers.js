@@ -46,32 +46,49 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// POST /api/admin/users/:id/reset-password
-router.post("/:id/reset-password", async (req, res) => {
-  try {
-    const { newPassword } = req.body;
+// * DELETE /api/admin/users/:id
+router.delete("/:id", async (req, res) => {
+  const { id } = req.params;
 
-    if (!newPassword || newPassword.length < 6) {
-      return res
-        .status(400)
-        .json({ message: "Password must be at least 6 characters" });
+  try {
+    console.log("🗑 Delete request for user id:", id);
+
+    const user = await User.findById(id);
+
+    if (!user) {
+      console.log("⚠️ User not found for id:", id);
+      return res.status(404).json({ message: "User not found." });
     }
 
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(newPassword, salt);
+    console.log("🔎 Found user:", {
+      id: user._id.toString(),
+      username: user.username,
+      email: user.email,
+      isAdmin: user.isAdmin,
+      role: user.role,
+    });
 
-    const user = await User.findByIdAndUpdate(
-      req.params.id,
-      { passwordHash },
-      { new: true }
-    );
+    // 🚫 PROTECT ADMIN ACCOUNTS
+    const isAdmin =
+      user.isAdmin === true ||
+      (typeof user.role === "string" && user.role.toLowerCase() === "admin") ||
+      (typeof user.username === "string" &&
+        user.username.toLowerCase() === "admin");
 
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (isAdmin) {
+      console.log("❌ Attempt to delete admin user. Blocking.");
+      return res.status(403).json({ message: "Admin user cannot be deleted." });
+    }
 
-    res.json({ message: "Password reset successfully" });
+    await User.findByIdAndDelete(id);
+
+    console.log("✅ User deleted:", id);
+    return res.json({ message: "User deleted successfully." });
   } catch (err) {
-    console.error("Error resetting password:", err);
-    res.status(500).json({ message: "Failed to reset password" });
+    console.error("🔥 Error deleting user:", err);
+    return res
+      .status(500)
+      .json({ message: "Server error while deleting user." });
   }
 });
 
