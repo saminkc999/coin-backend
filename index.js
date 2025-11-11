@@ -11,8 +11,6 @@ import statsRoutes from "./routes/stats.js";
 import healthRoutes from "./routes/health.js";
 import adminUserRoutes from "./routes/adminUsers.js";
 
-import dotenv from "dotenv";
-
 if (process.env.NODE_ENV !== "production") {
   dotenv.config(); // local dev only
 }
