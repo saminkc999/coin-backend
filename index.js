@@ -18,7 +18,8 @@ if (process.env.NODE_ENV !== "production") {
 const app = express();
 
 const FRONTEND_ORIGIN =
-  process.env.FRONTEND_ORIGIN || "https://coin-frontend.vercel.app";
+  process.env.FRONTEND_ORIGIN || "https://coin-delta-eight.vercel.app"
+
 
 const allowedOrigins = [
   "http://localhost:5173",
