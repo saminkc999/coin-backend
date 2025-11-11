@@ -1,6 +1,6 @@
 // api/utils/admin.js
 import bcrypt from "bcryptjs";
-import User from "../models/User.js";
+import User from "../models/User";
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "admin@example.com";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "NepKath@2025?";
