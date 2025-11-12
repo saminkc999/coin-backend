@@ -56,7 +56,7 @@ app.use("/api", statsRoutes);
 app.use("/api", healthRoutes);
 app.use("/api/admin/users", adminUserRoutes);
 app.use("/api/facebook-leads", facebookLeadRoutes);
-app.use("/api", gameEntryRoutes);
+app.use("/api/game-entries", gameEntryRoutes);
 // ✅ Start server
 const PORT = process.env.PORT || 5000;
 

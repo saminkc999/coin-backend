@@ -20,7 +20,7 @@ router.use(async (_req, res, next) => {
  * POST /api/game-entries
  * Body: { type, playerName, gameName?, amount, note?, date? }
  */
-router.post("/game-entries", async (req, res) => {
+router.post("/", async (req, res) => {
   try {
     const { type, playerName, gameName, amount, note, date } = req.body;
 
@@ -55,13 +55,13 @@ router.post("/game-entries", async (req, res) => {
  * GET /api/game-entries
  * Query (optional): playerName, type, from, to, limit
  */
-router.get("/game-entries", async (req, res) => {
+router.get("/", async (req, res) => {
   try {
     const { playerName, type, from, to, limit } = req.query;
 
     const filter = {};
     if (playerName) filter.playerName = String(playerName);
-    if (type && ["freeplay", "deposit", "redeem", "bonus"].includes(type)) {
+    if (type && ["freeplay", "deposit", "redeem"].includes(type)) {
       filter.type = type;
     }
     if (from || to) {

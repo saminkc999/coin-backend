@@ -1,9 +1,19 @@
-// api/models/GameEntry.js
 import mongoose from "mongoose";
+
+/**
+ * GameEntry Model
+ * Tracks all game-related financial actions:
+ * - deposit (player adds money)
+ * - redeem  (player withdraws or redeems)
+ * - freeplay (no-cost session, usually promotional)
+ * - bonus   (manual or system-added bonus)
+ *
+ * Each entry is linked to a player name and optionally a specific game.
+ */
 
 const gameEntrySchema = new mongoose.Schema(
   {
-    // What kind of transaction is this?
+    // Transaction type
     type: {
       type: String,
       enum: ["freeplay", "deposit", "redeem", "bonus"],
@@ -11,22 +21,70 @@ const gameEntrySchema = new mongoose.Schema(
       index: true,
     },
 
-    // Who?
-    playerName: { type: String, required: true, trim: true, index: true },
+    // Player identification
+    playerName: {
+      type: String,
+      required: true,
+      trim: true,
+      index: true,
+    },
 
-    // Which game? (optional but useful)
-    gameName: { type: String, trim: true, default: "" },
+    // Game identifier (optional)
+    gameName: {
+      type: String,
+      trim: true,
+      default: "",
+    },
 
-    // How much? (freeplay/bonus can be 0 if you want to track just the entry)
-    amount: { type: Number, min: 0, required: true },
+    // Transaction amount (always ≥ 0)
+    amount: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
 
-    // Optional note
-    note: { type: String, trim: true, default: "" },
+    // Notes or admin comment
+    note: {
+      type: String,
+      trim: true,
+      default: "",
+    },
 
-    // Optional explicit date (defaults to now)
-    date: { type: Date, default: Date.now },
+    // Optional date override — defaults to now
+    date: {
+      type: Date,
+      default: Date.now,
+    },
+
+    // System metadata (optional for UI)
+    createdBy: {
+      type: String,
+      trim: true,
+      default: "system",
+    },
+
+    // Optional link to Payment or Session IDs (future expansion)
+    refId: {
+      type: String,
+      trim: true,
+      default: "",
+    },
   },
-  { timestamps: true }
+  {
+    timestamps: true, // adds createdAt, updatedAt
+  }
 );
+
+/**
+ * Example entry:
+ * {
+ *   type: "deposit",
+ *   playerName: "JohnDoe",
+ *   gameName: "CrashCats",
+ *   amount: 50,
+ *   note: "Deposit via CashApp",
+ *   date: "2025-11-12T00:00:00Z"
+ * }
+ */
 
 export default mongoose.model("GameEntry", gameEntrySchema);
