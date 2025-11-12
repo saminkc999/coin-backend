@@ -8,7 +8,11 @@ import mongoose from "mongoose";
  * - freeplay (no-cost session, usually promotional)
  * - bonus   (manual or system-added bonus)
  *
- * Each entry is linked to a player name and optionally a specific game.
+ * Now supports:
+ *  - amountBase: user-entered base amount
+ *  - bonusRate: applied percentage (default 0)
+ *  - bonusAmount: derived bonus
+ *  - amountFinal: final amount (after bonus)
  */
 
 const gameEntrySchema = new mongoose.Schema(
@@ -16,7 +20,7 @@ const gameEntrySchema = new mongoose.Schema(
     // Transaction type
     type: {
       type: String,
-      enum: ["freeplay", "deposit", "redeem"],
+      enum: ["freeplay", "deposit", "redeem", "bonus"],
       required: true,
       index: true,
     },
@@ -36,7 +40,35 @@ const gameEntrySchema = new mongoose.Schema(
       default: "",
     },
 
-    // Transaction amount (always ≥ 0)
+    // 💰 Base amount entered by admin
+    amountBase: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+
+    // 🎁 Bonus percentage (%)
+    bonusRate: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // 💵 Bonus amount (calculated automatically)
+    bonusAmount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // ✅ Final amount (base + bonus)
+    amountFinal: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+
+    // (Backward compatibility)
     amount: {
       type: Number,
       required: true,
@@ -54,6 +86,12 @@ const gameEntrySchema = new mongoose.Schema(
     date: {
       type: Date,
       default: Date.now,
+    },
+
+    // Derived for sorting/grouping (e.g., "2025-11-12")
+    dateString: {
+      type: String,
+      required: true,
     },
 
     // System metadata (optional for UI)
@@ -76,16 +114,31 @@ const gameEntrySchema = new mongoose.Schema(
 );
 
 /**
- * Example entry:
- * {
- *   type: "deposit",
- *   playerName: "JohnDoe",
- *   gameName: "CrashCats",
- *   amount: 50,
- *   note: "Deposit via CashApp",
- *   date: "2025-11-12T00:00:00Z"
- * }
+ * 🔁 Auto-compute derived fields before save
  */
+gameEntrySchema.pre("validate", function (next) {
+  // Normalize dateString
+  const d = this.date || new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const y = d.getFullYear();
+  const m = pad(d.getMonth() + 1);
+  const day = pad(d.getDate());
+  this.dateString = `${y}-${m}-${day}`;
+
+  // Auto-calculate bonus + final amount if missing
+  const base = Number(this.amountBase ?? 0);
+  const rate = Number(this.bonusRate ?? 0);
+
+  // For redeem — no bonus
+  let bonus = this.type === "redeem" ? 0 : (base * rate) / 100;
+  if (isNaN(bonus) || bonus < 0) bonus = 0;
+
+  this.bonusAmount = bonus;
+  this.amountFinal = this.type === "redeem" ? base : base + bonus;
+  this.amount = this.amountFinal; // for backward compatibility
+
+  next();
+});
 
 export default mongoose.models.GameEntry ||
   mongoose.model("GameEntry", gameEntrySchema);

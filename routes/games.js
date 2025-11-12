@@ -12,19 +12,33 @@ const router = express.Router();
  * If you mount this router as:
  *   app.use("/api", gameRoutes)
  * then these routes will be:
- *   GET    /api/games
+ *   GET    /api/games            -> with ?q= returns string[] (names), else Game[]
  *   POST   /api/games
  *   PUT    /api/games/:id
  *   DELETE /api/games/:id
  *   POST   /api/games/:id/add-moves
  */
 
-// GET /api/games
-router.get("/games", async (_, res) => {
+// GET /api/games  (names suggest when ?q= provided; else full list)
+router.get("/games", async (req, res) => {
   try {
     await connectDB();
+
+    const q = (req.query.q || "").toString().trim();
+
+    // If typing query exists -> return distinct names for autocomplete
+    if (q) {
+      const filter = { name: { $regex: q, $options: "i" } };
+      const names = await Game.distinct("name", filter);
+      const sorted = names
+        .filter((n) => typeof n === "string" && n.trim().length > 0)
+        .sort((a, b) => a.localeCompare(b));
+      return res.json(sorted); // string[]
+    }
+
+    // No query -> return full game docs for admin tables, etc.
     const games = await Game.find({}).sort({ createdAt: 1 }).lean();
-    res.json(games);
+    return res.json(games); // Game[]
   } catch (err) {
     console.error("GET /api/games error:", err);
     res.status(500).json({ message: "Failed to load games" });
@@ -47,13 +61,21 @@ router.post("/games", async (req, res) => {
   try {
     await connectDB();
 
+    // Optional: prevent duplicate names (comment out if you allow duplicates)
+    const exists = await Game.findOne({ name }).lean();
+    if (exists) {
+      return res
+        .status(409)
+        .json({ message: "Game with this name already exists" });
+    }
+
     const newGame = await Game.create({
       id: Date.now(), // numeric id used by frontend
       name,
       coinsSpent,
       coinsEarned,
       coinsRecharged,
-      // totalCoins will be auto-calculated in GameSchema.pre("save")
+      // totalCoins recalculated in GameSchema.pre("save")
     });
 
     res.status(201).json(newGame);
@@ -71,7 +93,7 @@ router.put("/games/:id", async (req, res) => {
     coinsEarned,
     coinsRecharged,
     lastRechargeDate,
-    // totalCoins is intentionally ignored; model recalculates it
+    // totalCoins is recalculated in pre("save")
   } = req.body;
 
   try {
@@ -89,9 +111,7 @@ router.put("/games/:id", async (req, res) => {
       game.lastRechargeDate = lastRechargeDate;
     }
 
-    // totalCoins will be recalculated in pre("save")
     await game.save();
-
     res.json(game);
   } catch (err) {
     console.error("PUT /api/games/:id error:", err);
@@ -116,6 +136,7 @@ router.delete("/games/:id", async (req, res) => {
   }
 });
 
+// POST /api/games/:id/add-moves
 router.post("/games/:id/add-moves", async (req, res) => {
   const { id } = req.params;
   const {
@@ -140,13 +161,12 @@ router.post("/games/:id/add-moves", async (req, res) => {
     const redeem = safeNum(redeemDelta);
     const deposit = safeNum(depositDelta);
 
-    // 🔢 Update cumulative totals for the game
-    // freeplay & deposit subtract, redeem adds → handled in model's pre("save")
+    // Update cumulative totals
     game.coinsEarned = safeNum(game.coinsEarned) + freeplay; // freeplay
     game.coinsSpent = safeNum(game.coinsSpent) + redeem; // redeem
     game.coinsRecharged = safeNum(game.coinsRecharged) + deposit; // deposit
 
-    // Optionally track last recharge date when deposit happens
+    // Update last recharge date on deposit
     if (deposit > 0) {
       const now = new Date();
       const yyyy = now.getFullYear();
@@ -155,18 +175,17 @@ router.post("/games/:id/add-moves", async (req, res) => {
       game.lastRechargeDate = `${yyyy}-${mm}-${dd}`;
     }
 
-    // totalCoins will be recalculated in GameSchema.pre("save")
     await game.save();
 
-    // 🧾 Log user activity for this action
+    // Log user activity
     if (freeplay || redeem || deposit) {
       await UserActivity.create({
         username,
         gameId: game.id,
         gameName: game.name,
-        freeplay, // this action's freeplay
-        redeem, // this action's redeem
-        deposit, // this action's deposit
+        freeplay,
+        redeem,
+        deposit,
         freeplayTotal:
           typeof freeplayTotal === "number" ? freeplayTotal : undefined,
         redeemTotal: typeof redeemTotal === "number" ? redeemTotal : undefined,
@@ -175,12 +194,21 @@ router.post("/games/:id/add-moves", async (req, res) => {
       });
     }
 
-    // send updated game back (includes totalCoins)
     return res.json(game);
   } catch (err) {
     console.error("POST /api/games/:id/add-moves error:", err);
     return res.status(500).json({ message: "Failed to update game moves" });
   }
+});
+// POST /api/games/:id/reset-recharge
+router.post("/:id/reset-recharge", async (req, res) => {
+  const { id } = req.params;
+  const game = await GameModel.findOneAndUpdate(
+    { id },
+    { $set: { coinsRecharged: 0, lastRechargeDate: null } },
+    { new: true }
+  );
+  res.json(game);
 });
 
 export default router;

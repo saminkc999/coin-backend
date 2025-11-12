@@ -5,6 +5,8 @@ import GameEntry from "../models/GameEntry.js";
 
 const router = express.Router();
 
+const ALLOWED_TYPES = ["freeplay", "deposit", "redeem"];
+
 // Ensure DB for all routes here
 router.use(async (_req, res, next) => {
   try {
@@ -16,32 +18,71 @@ router.use(async (_req, res, next) => {
   }
 });
 
+// helpers
+function toNumber(n, def = 0) {
+  const v = Number(n);
+  return Number.isFinite(v) ? v : def;
+}
+function toDate(d) {
+  const v = new Date(d);
+  return isNaN(v.getTime()) ? undefined : v;
+}
+
 /**
  * POST /api/game-entries
- * Body: { type, playerName, gameName?, amount, note?, date? }
+ * Body (from frontend):
+ * {
+ *   type: "freeplay" | "deposit" | "redeem",
+ *   playerName: string,
+ *   gameName?: string,
+ *   amount: number,            // client’s final amount (ignored in favor of server calc)
+ *   note?: string,
+ *   amountBase?: number,       // user input
+ *   bonusRate?: number,        // % (only applies for deposit)
+ *   bonusAmount?: number,      // client calc (ignored; we recompute)
+ *   amountFinal?: number,      // client calc (ignored; we recompute)
+ *   date?: ISO string
+ * }
  */
 router.post("/", async (req, res) => {
   try {
-    const { type, playerName, gameName, amount, note, date } = req.body;
+    const { type, playerName, gameName, note, amountBase, bonusRate, date } =
+      req.body;
 
-    if (!type || !["freeplay", "deposit", "redeem", "bonus"].includes(type)) {
+    // validate type
+    if (!type || !ALLOWED_TYPES.includes(type)) {
       return res.status(400).json({ message: "Invalid type" });
     }
-    if (!playerName || typeof playerName !== "string") {
+
+    // validate playerName
+    if (!playerName || typeof playerName !== "string" || !playerName.trim()) {
       return res.status(400).json({ message: "playerName required" });
     }
-    const amt = Number(amount);
-    if (Number.isNaN(amt) || amt < 0) {
+
+    // parse numbers
+    const base = toNumber(amountBase ?? req.body.amount, NaN);
+    if (!Number.isFinite(base) || base < 0) {
       return res.status(400).json({ message: "amount must be >= 0" });
     }
+
+    const rate = Math.max(0, toNumber(bonusRate, 0));
+
+    // compute bonus server-side (only for deposits)
+    const computedBonus = type === "deposit" ? (base * rate) / 100 : 0;
+    const finalAmount = type === "deposit" ? base + computedBonus : base;
 
     const doc = await GameEntry.create({
       type,
       playerName: playerName.trim(),
       gameName: (gameName || "").trim(),
-      amount: amt,
+      // store both final and breakdown (amount mirrors final for consistency)
+      amount: finalAmount,
+      amountBase: base,
+      bonusRate: type === "deposit" ? rate : 0,
+      bonusAmount: type === "deposit" ? computedBonus : 0,
+      amountFinal: finalAmount,
       note: note ? String(note) : "",
-      date: date ? new Date(date) : undefined,
+      date: date ? toDate(date) : undefined,
     });
 
     res.status(201).json({ message: "Entry saved", entry: doc });
@@ -61,18 +102,27 @@ router.get("/", async (req, res) => {
 
     const filter = {};
     if (playerName) filter.playerName = String(playerName);
-    if (type && ["freeplay", "deposit", "redeem"].includes(type)) {
-      filter.type = type;
+
+    if (type && ALLOWED_TYPES.includes(String(type))) {
+      filter.type = String(type);
     }
+
     if (from || to) {
-      filter.date = {};
-      if (from) filter.date.$gte = new Date(String(from));
-      if (to) filter.date.$lte = new Date(String(to));
+      const fromDate = from ? toDate(String(from)) : undefined;
+      const toDate = to ? toDate(String(to)) : undefined;
+
+      if (fromDate || toDate) {
+        filter.date = {};
+        if (fromDate) filter.date.$gte = fromDate;
+        if (toDate) filter.date.$lte = toDate;
+      }
     }
+
+    const lim = Math.min(toNumber(limit, 30), 200);
 
     const docs = await GameEntry.find(filter)
       .sort({ createdAt: -1 })
-      .limit(Math.min(Number(limit) || 30, 200))
+      .limit(lim)
       .lean();
 
     res.json(docs);
