@@ -16,7 +16,7 @@ const gameEntrySchema = new mongoose.Schema(
     // Transaction type
     type: {
       type: String,
-      enum: ["freeplay", "deposit", "redeem", "bonus"],
+      enum: ["freeplay", "deposit", "redeem"],
       required: true,
       index: true,
     },
@@ -87,4 +87,5 @@ const gameEntrySchema = new mongoose.Schema(
  * }
  */
 
-export default mongoose.model("GameEntry", gameEntrySchema);
+export default mongoose.models.GameEntry ||
+  mongoose.model("GameEntry", gameEntrySchema);
