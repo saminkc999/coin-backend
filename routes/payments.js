@@ -3,22 +3,25 @@ import express from "express";
 import { nanoid } from "nanoid";
 
 import { connectDB } from "../config/db.js";
-import Payment from "../models/Payment.js";
-import { validMethods } from "../utils/numbers.js";
+import Payment, { METHODS, TX_TYPES } from "../models/Payment.js";
 import { computeTotals } from "../utils/totals.js";
 
 const router = express.Router();
 
 /* ---------- Helpers ---------- */
-const normalizeDate = (d) => {
-  // Accept ISO or YYYY-MM-DD, fallback to today (YYYY-MM-DD)
-  if (typeof d === "string" && d.length) {
-    const dt = new Date(d);
-    if (!Number.isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+const toDateOrNull = (d) => {
+  if (!d) return null;
+  const parsed = new Date(d);
+  if (!Number.isNaN(parsed.getTime())) return parsed; // ISO or parseable
+  // If strictly YYYY-MM-DD, build a Date at local midnight
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(d))) {
+    const [y, m, day] = String(d).split("-").map(Number);
+    return new Date(y, m - 1, day);
   }
-  return new Date().toISOString().slice(0, 10);
+  return null;
 };
+
+const normalizeToDate = (d) => toDateOrNull(d) || new Date();
 
 const parseMoney = (v, { allowZero = false } = {}) => {
   const n = Number(v);
@@ -39,11 +42,16 @@ router.use(async (_req, _res, next) => {
 });
 
 /* ---------- GET /api/payments?date=YYYY-MM-DD ---------- */
+/* If ?date is provided, match that day via dateString */
 router.get("/payments", async (req, res) => {
   try {
     const { date } = req.query;
-    const q = date ? { date: String(date) } : {};
-    const payments = await Payment.find(q).sort({ createdAt: -1 }).lean();
+    const filter = {};
+    if (date) {
+      // dateString is set in the model pre-validate hook
+      filter.dateString = String(date);
+    }
+    const payments = await Payment.find(filter).sort({ createdAt: -1 }).lean();
     res.json(payments);
   } catch (err) {
     console.error("GET /api/payments error:", err);
@@ -77,7 +85,6 @@ router.get("/totals", async (_req, res) => {
 
 /* ---------- POST /api/payments/cashin ---------- */
 /* body: { amount, method, note?, playerName?, date? } */
-// routes/payments.js  (cashin)
 router.post("/payments/cashin", async (req, res) => {
   try {
     const { amount, method, note, playerName, date } = req.body;
@@ -86,7 +93,7 @@ router.post("/payments/cashin", async (req, res) => {
     if (amt === null)
       return res.status(400).json({ message: "Invalid amount" });
 
-    if (!validMethods.includes(method)) {
+    if (!METHODS.includes(method)) {
       return res.status(400).json({ message: "Invalid method" });
     }
 
@@ -95,24 +102,16 @@ router.post("/payments/cashin", async (req, res) => {
       amount: amt,
       method,
       txType: "cashin",
-      note: typeof note === "string" ? note.trim() : "", // <-- no null
-      playerName: typeof playerName === "string" ? playerName.trim() : "", // <-- no null
-      date: date ? new Date(date) : new Date(), // Date is fine; pre('validate') sets dateString
+      note: note?.trim() || "",
+      playerName: (playerName || "").trim(),
+      date: normalizeToDate(date), // pass Date; model sets dateString
     });
+
     const totals = await computeTotals();
     res.status(201).json({ ok: true, payment, totals });
   } catch (err) {
     console.error("POST /api/payments/cashin error:", err);
-    const message = err?.message || "Failed to create cash-in payment";
-    const details = err?.errors
-      ? Object.fromEntries(
-          Object.entries(err.errors).map(([k, v]) => [
-            k,
-            v?.message || String(v),
-          ])
-        )
-      : undefined;
-    return res.status(500).json({ message, details });
+    res.status(500).json({ message: "Failed to create cash-in payment" });
   }
 });
 
@@ -127,7 +126,7 @@ router.post("/payments/cashout", async (req, res) => {
     if (amt === null)
       return res.status(400).json({ message: "Invalid amount" });
 
-    if (!validMethods.includes(method)) {
+    if (!METHODS.includes(method)) {
       return res.status(400).json({ message: "Invalid method" });
     }
 
@@ -156,11 +155,11 @@ router.post("/payments/cashout", async (req, res) => {
       amount: amt,
       method,
       txType: "cashout",
-      note: null,
+      note: "",
       playerName: playerName.trim(),
-      totalPaid: tPaid,
-      totalCashout: tCashout,
-      date: normalizeDate(date),
+      totalPaid: tPaid ?? 0,
+      totalCashout: tCashout ?? 0,
+      date: normalizeToDate(date),
     });
 
     const totals = await computeTotals();
@@ -222,7 +221,7 @@ router.put("/payments/:id", async (req, res) => {
 
     // method
     if (method !== undefined) {
-      if (!validMethods.includes(method)) {
+      if (!METHODS.includes(method)) {
         return res.status(400).json({ message: "Invalid method" });
       }
       payment.method = method;
@@ -230,18 +229,19 @@ router.put("/payments/:id", async (req, res) => {
 
     // txType
     if (txType !== undefined) {
-      payment.txType = txType === "cashout" ? "cashout" : "cashin";
+      payment.txType = TX_TYPES.includes(txType) ? txType : "cashin";
     }
 
     // date
     if (date !== undefined) {
-      payment.date = normalizeDate(date);
+      const d = toDateOrNull(date);
+      if (!d) return res.status(400).json({ message: "Invalid date" });
+      payment.date = d; // schema will rebuild dateString
     }
 
     // note & playerName
-    if (note !== undefined) payment.note = note?.trim() || null;
-    if (playerName !== undefined)
-      payment.playerName = playerName?.trim() || null;
+    if (note !== undefined) payment.note = note?.trim() || "";
+    if (playerName !== undefined) payment.playerName = playerName?.trim() || "";
 
     // totals (cashout extras)
     if (totalPaid !== undefined) {
@@ -301,22 +301,19 @@ router.post("/recharge", async (req, res) => {
     if (amt === null)
       return res.status(400).json({ message: "Invalid amount" });
 
-    if (!validMethods.includes(method)) {
+    if (!METHODS.includes(method)) {
       return res.status(400).json({ message: "Invalid method" });
     }
 
-    const normalizedType = txType === "cashout" ? "cashout" : "cashin";
-    const paymentDate = normalizeDate(date);
-
+    const normalizedType = TX_TYPES.includes(txType) ? txType : "cashin";
     const payload = {
       id: nanoid(),
       amount: amt,
       method,
       txType: normalizedType,
-      note: note?.trim() || null,
-      playerName:
-        normalizedType === "cashin" ? playerName?.trim() || null : null,
-      date: paymentDate,
+      note: note?.trim() || "",
+      playerName: normalizedType === "cashin" ? (playerName || "").trim() : "",
+      date: normalizeToDate(date),
     };
 
     if (normalizedType === "cashout") {
