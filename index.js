@@ -11,7 +11,7 @@ import statsRoutes from "./routes/stats.js";
 import healthRoutes from "./routes/health.js";
 import adminUserRoutes from "./routes/adminUsers.js";
 import facebookLeadRoutes from "./routes/facebookLeads.js";
-
+import gameEntryRoutes from "./routes/gameEntries.js";
 if (process.env.NODE_ENV !== "production") {
   dotenv.config(); // local dev only
 }
@@ -56,6 +56,7 @@ app.use("/api", statsRoutes);
 app.use("/api", healthRoutes);
 app.use("/api/admin/users", adminUserRoutes);
 app.use("/api/facebook-leads", facebookLeadRoutes);
+app.use("/api", gameEntryRoutes);
 // ✅ Start server
 const PORT = process.env.PORT || 5000;
 
