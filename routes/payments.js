@@ -25,6 +25,7 @@ router.get("/payments", async (req, res) => {
     res.status(500).json({ message: "Failed to load payments" });
   }
 });
+
 // GET /api/payments/cashout — only cashout records
 router.get("/payments/cashout", async (_req, res) => {
   try {
@@ -54,9 +55,9 @@ router.get("/totals", async (_req, res) => {
 });
 
 // ✅ CASH IN: POST /api/payments/cashin
-// body: { amount, method, note?, date? }
+// body: { amount, method, note?, playerName?, date? }
 router.post("/payments/cashin", async (req, res) => {
-  const { amount, method, note, date } = req.body;
+  const { amount, method, note, playerName, date } = req.body;
   const amt = Number(amount);
 
   if (!Number.isFinite(amt) || amt <= 0) {
@@ -83,7 +84,8 @@ router.post("/payments/cashin", async (req, res) => {
       method,
       txType: "cashin",
       note: note?.trim() || null,
-      playerName: null,
+      // 👇 now stored for cashin
+      playerName: playerName?.trim() || null,
       date: paymentDate,
     });
 
@@ -101,9 +103,9 @@ router.post("/payments/cashin", async (req, res) => {
 });
 
 // 🚪 CASH OUT: POST /api/payments/cashout
-// body: { amount, method, playerName, date? }
+// body: { amount, method, playerName, totalPaid?, totalCashout?, date? }
 router.post("/payments/cashout", async (req, res) => {
-  const { amount, method, playerName, date } = req.body;
+  const { amount, method, playerName, totalPaid, totalCashout, date } = req.body;
   const amt = Number(amount);
 
   if (!Number.isFinite(amt) || amt <= 0) {
@@ -123,6 +125,23 @@ router.post("/payments/cashout", async (req, res) => {
     paymentDate = new Date().toISOString().slice(0, 10);
   }
 
+  // normalize totals if provided
+  const tPaid =
+    totalPaid !== undefined && totalPaid !== null
+      ? Number(totalPaid)
+      : undefined;
+  const tCashout =
+    totalCashout !== undefined && totalCashout !== null
+      ? Number(totalCashout)
+      : undefined;
+
+  if (tPaid !== undefined && (!Number.isFinite(tPaid) || tPaid < 0)) {
+    return res.status(400).json({ message: "Invalid totalPaid" });
+  }
+  if (tCashout !== undefined && (!Number.isFinite(tCashout) || tCashout < 0)) {
+    return res.status(400).json({ message: "Invalid totalCashout" });
+  }
+
   try {
     await connectDB();
 
@@ -133,6 +152,10 @@ router.post("/payments/cashout", async (req, res) => {
       txType: "cashout",
       note: null,
       playerName: playerName.trim(),
+      totalPaid:
+        tPaid !== undefined ? Math.round(tPaid * 100) / 100 : undefined,
+      totalCashout:
+        tCashout !== undefined ? Math.round(tCashout * 100) / 100 : undefined,
       date: paymentDate,
     });
 
@@ -177,7 +200,16 @@ router.post("/recalc", async (_req, res) => {
 // ✏️ PUT /api/payments/:id (edit payment)
 router.put("/payments/:id", async (req, res) => {
   const { id } = req.params;
-  const { amount, method, note, playerName, date, txType } = req.body;
+  const {
+    amount,
+    method,
+    note,
+    playerName,
+    date,
+    txType,
+    totalPaid,
+    totalCashout,
+  } = req.body;
 
   try {
     await connectDB();
@@ -222,6 +254,24 @@ router.put("/payments/:id", async (req, res) => {
       payment.playerName = playerName?.trim() || null;
     }
 
+    // totalPaid
+    if (totalPaid !== undefined) {
+      const tPaid = Number(totalPaid);
+      if (!Number.isFinite(tPaid) || tPaid < 0) {
+        return res.status(400).json({ message: "Invalid totalPaid" });
+      }
+      payment.totalPaid = Math.round(tPaid * 100) / 100;
+    }
+
+    // totalCashout
+    if (totalCashout !== undefined) {
+      const tCashout = Number(totalCashout);
+      if (!Number.isFinite(tCashout) || tCashout < 0) {
+        return res.status(400).json({ message: "Invalid totalCashout" });
+      }
+      payment.totalCashout = Math.round(tCashout * 100) / 100;
+    }
+
     await payment.save();
 
     const totals = await computeTotals();
@@ -259,6 +309,87 @@ router.delete("/payments/:id", async (req, res) => {
   } catch (err) {
     console.error("DELETE /api/payments/:id error:", err);
     res.status(500).json({ message: "Failed to delete payment" });
+  }
+});
+
+// 🔁 Unified recharge endpoint used by your new PaymentForm
+// body: { amount, method, txType, note?, playerName?, totalPaid?, totalCashout?, date? }
+router.post("/recharge", async (req, res) => {
+  try {
+    const {
+      amount,
+      method,
+      txType,
+      note,
+      playerName,
+      totalPaid,
+      totalCashout,
+      date,
+    } = req.body;
+
+    const amt = Number(amount);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      return res.status(400).json({ message: "Invalid amount" });
+    }
+    if (!validMethods.includes(method)) {
+      return res.status(400).json({ message: "Invalid method" });
+    }
+
+    const normalizedType = txType === "cashout" ? "cashout" : "cashin";
+
+    // keep same date format: YYYY-MM-DD string
+    let paymentDate;
+    if (typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      paymentDate = date;
+    } else {
+      paymentDate = new Date().toISOString().slice(0, 10);
+    }
+
+    const tPaid =
+      totalPaid !== undefined && totalPaid !== null
+        ? Number(totalPaid)
+        : undefined;
+    const tCashout =
+      totalCashout !== undefined && totalCashout !== null
+        ? Number(totalCashout)
+        : undefined;
+
+    if (tPaid !== undefined && (!Number.isFinite(tPaid) || tPaid < 0)) {
+      return res.status(400).json({ message: "Invalid totalPaid" });
+    }
+    if (tCashout !== undefined && (!Number.isFinite(tCashout) || tCashout < 0)) {
+      return res.status(400).json({ message: "Invalid totalCashout" });
+    }
+
+    await connectDB();
+
+    const payload = {
+      id: nanoid(),
+      amount: Math.round(amt * 100) / 100,
+      method,
+      txType: normalizedType,
+      note: note?.trim() || null,
+      playerName:
+        normalizedType === "cashin" ? playerName?.trim() || null : null,
+      date: paymentDate,
+    };
+
+    if (normalizedType === "cashout") {
+      if (tPaid !== undefined) {
+        payload.totalPaid = Math.round(tPaid * 100) / 100;
+      }
+      if (tCashout !== undefined) {
+        payload.totalCashout = Math.round(tCashout * 100) / 100;
+      }
+    }
+
+    const payment = await Payment.create(payload);
+    const totals = await computeTotals();
+
+    res.status(201).json({ ok: true, payment, totals });
+  } catch (err) {
+    console.error("Error in POST /api/payments/recharge:", err);
+    res.status(500).json({ message: "Failed to create payment" });
   }
 });
 

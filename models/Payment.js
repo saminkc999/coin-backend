@@ -3,6 +3,13 @@ import mongoose from "mongoose";
 
 const paymentSchema = new mongoose.Schema(
   {
+    // 🔹 Link each payment to a user (for user history)
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+
     // Custom ID used in your routes (nanoid)
     id: {
       type: String,
@@ -29,7 +36,22 @@ const paymentSchema = new mongoose.Schema(
       enum: ["cashin", "cashout"],
       default: "cashin",
     },
+    playerName: {
+      type: String,
+      trim: true,
+    },
 
+    totalPaid: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    totalCashout: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     note: {
       type: String,
       default: null,

@@ -116,15 +116,16 @@ router.delete("/games/:id", async (req, res) => {
   }
 });
 
-// POST /api/games/:id/add-moves  (increment-only for user actions)
 router.post("/games/:id/add-moves", async (req, res) => {
   const { id } = req.params;
   const {
-    freeplayDelta = 0, // coinsEarned +
-    redeemDelta = 0, // coinsSpent +
-    depositDelta = 0, // coinsRecharged +
-    // totalCoins is NOT trusted from frontend anymore
+    freeplayDelta = 0,
+    redeemDelta = 0,
+    depositDelta = 0,
     username = "Unknown User",
+    freeplayTotal,
+    redeemTotal,
+    depositTotal,
   } = req.body;
 
   try {
@@ -139,12 +140,13 @@ router.post("/games/:id/add-moves", async (req, res) => {
     const redeem = safeNum(redeemDelta);
     const deposit = safeNum(depositDelta);
 
-    // Update game totals (history)
-    game.coinsEarned = safeNum(game.coinsEarned) + freeplay;
-    game.coinsSpent = safeNum(game.coinsSpent) + redeem;
-    game.coinsRecharged = safeNum(game.coinsRecharged) + deposit;
+    // 🔢 Update cumulative totals for the game
+    // freeplay & deposit subtract, redeem adds → handled in model's pre("save")
+    game.coinsEarned = safeNum(game.coinsEarned) + freeplay; // freeplay
+    game.coinsSpent = safeNum(game.coinsSpent) + redeem; // redeem
+    game.coinsRecharged = safeNum(game.coinsRecharged) + deposit; // deposit
 
-    // If there's a deposit, update lastRechargeDate as "YYYY-MM-DD"
+    // Optionally track last recharge date when deposit happens
     if (deposit > 0) {
       const now = new Date();
       const yyyy = now.getFullYear();
@@ -156,18 +158,24 @@ router.post("/games/:id/add-moves", async (req, res) => {
     // totalCoins will be recalculated in GameSchema.pre("save")
     await game.save();
 
-    // Log user activity for charts
+    // 🧾 Log user activity for this action
     if (freeplay || redeem || deposit) {
       await UserActivity.create({
         username,
         gameId: game.id,
         gameName: game.name,
-        freeplay,
-        redeem,
-        deposit,
+        freeplay, // this action's freeplay
+        redeem, // this action's redeem
+        deposit, // this action's deposit
+        freeplayTotal:
+          typeof freeplayTotal === "number" ? freeplayTotal : undefined,
+        redeemTotal: typeof redeemTotal === "number" ? redeemTotal : undefined,
+        depositTotal:
+          typeof depositTotal === "number" ? depositTotal : undefined,
       });
     }
 
+    // send updated game back (includes totalCoins)
     return res.json(game);
   } catch (err) {
     console.error("POST /api/games/:id/add-moves error:", err);

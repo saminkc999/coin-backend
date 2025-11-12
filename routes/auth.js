@@ -3,7 +3,7 @@ import express from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
-import User from "../models/User.js";         // 👈 make sure this matches file
+import User from "../models/User.js"; // 👈 make sure this matches file
 import { ensureAdminUser } from "../utils/admin.js";
 
 const router = express.Router();
@@ -60,7 +60,7 @@ router.post("/register", async (req, res) => {
 });
 
 // POST /api/auth/login
-router.post("/login", async (req, res) => {
+router.post("/", async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -80,7 +80,11 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
-    const payload = { userId: user._id, role: user.role, isAdmin: user.isAdmin };
+    const payload = {
+      userId: user._id,
+      role: user.role,
+      isAdmin: user.isAdmin,
+    };
     const token = jwt.sign(payload, process.env.JWT_SECRET || "dev-secret", {
       expiresIn: "7d",
     });
@@ -103,4 +107,4 @@ router.post("/login", async (req, res) => {
 });
 
 // 👇 THIS LINE IS CRITICAL
-export default router;   // ✅ default export for index.js
+export default router; // ✅ default export for index.js
