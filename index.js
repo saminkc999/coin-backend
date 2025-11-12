@@ -51,7 +51,7 @@ app.get("/", (_req, res) => res.send("✅ API is running"));
 app.use("/api/auth", authRoutes);
 app.use("/api", gameRoutes);
 app.use("/api", paymentRoutes);
-app.use("/api", loginRoutes);
+app.use("/api/logins", loginRoutes);
 app.use("/api", statsRoutes);
 app.use("/api", healthRoutes);
 app.use("/api/admin/users", adminUserRoutes);

@@ -90,15 +90,24 @@ router.get("/", async (req, res) => {
   try {
     const { username } = req.query;
 
-    const query = {};
-    if (username) query.username = username;
+    const filter = {};
+    if (username && typeof username === "string") {
+      filter.username = username;
+    }
 
-    const logs = await Login.find(query).sort({ signInAt: -1 });
+    const sessions = await LoginSession.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(200)
+      .lean();
 
-    res.json(logs);
+    console.log("📜 /api/logins =>", filter, sessions.length);
+
+    res.json(sessions);
   } catch (err) {
-    console.error("GET /logins error:", err);
-    res.status(500).json({ message: "Failed to fetch logs" });
+    console.error("Error in GET /api/logins:", err);
+    res
+      .status(500)
+      .json({ message: "Failed to load sessions", error: err.message });
   }
 });
 
