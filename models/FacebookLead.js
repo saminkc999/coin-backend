@@ -8,15 +8,33 @@ const FacebookLeadSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+
     email: {
       type: String,
       required: true,
       trim: true,
       lowercase: true,
     },
+
+    phone: {
+      type: String,
+      trim: true,
+    },
+
+    contactPreference: {
+      type: String,
+      enum: ["whatsapp", "telegram", ""],
+      default: "",
+    },
+
+    facebookLink: {
+      type: String,
+      trim: true,
+    },
+
     source: {
       type: String,
-      default: "facebook", // optional
+      default: "facebook",
     },
   },
   { timestamps: true }

@@ -17,12 +17,28 @@ router.use(async (_req, res, next) => {
 });
 
 /**
+ * 📥 GET /api/facebook-leads
+ * Returns JSON list of leads (for table)
+ */
+router.get("/", async (_req, res) => {
+  try {
+    const leads = await FacebookLead.find().sort({ createdAt: -1 }).lean();
+    res.json(leads);
+  } catch (err) {
+    console.error("Error in GET /api/facebook-leads:", err);
+    res
+      .status(500)
+      .json({ message: "Failed to load leads", error: err.message });
+  }
+});
+
+/**
  * 🟢 POST /api/facebook-leads
- * Body: { name, email }
+ * Body: { name, email, phone?, contactPreference?, facebookLink? }
  */
 router.post("/", async (req, res) => {
   try {
-    const { name, email } = req.body;
+    const { name, email, phone, contactPreference, facebookLink } = req.body;
 
     if (!name || !email) {
       return res
@@ -30,13 +46,60 @@ router.post("/", async (req, res) => {
         .json({ message: "Both name and email are required" });
     }
 
-    const lead = await FacebookLead.create({ name, email });
+    const lead = await FacebookLead.create({
+      name,
+      email,
+      phone: phone || undefined,
+      contactPreference: contactPreference || "",
+      facebookLink: facebookLink || "",
+    });
+
     res.status(201).json({ message: "Lead saved", lead });
   } catch (err) {
     console.error("Error in POST /api/facebook-leads:", err);
     res
       .status(500)
       .json({ message: "Failed to save lead", error: err.message });
+  }
+});
+
+/**
+ * ✏️ PUT /api/facebook-leads/:id
+ * Body: { name, email, phone?, contactPreference?, facebookLink? }
+ * Used for editing from the table
+ */
+router.put("/:id", async (req, res) => {
+  try {
+    const { name, email, phone, contactPreference, facebookLink } = req.body;
+
+    if (!name || !email) {
+      return res
+        .status(400)
+        .json({ message: "Both name and email are required" });
+    }
+
+    const updated = await FacebookLead.findByIdAndUpdate(
+      req.params.id,
+      {
+        name,
+        email,
+        phone: phone || undefined,
+        contactPreference: contactPreference || "",
+        facebookLink: facebookLink || "",
+      },
+      { new: true }
+    );
+
+    if (!updated) {
+      return res.status(404).json({ message: "Lead not found" });
+    }
+
+    res.json({ message: "Lead updated", lead: updated });
+  } catch (err) {
+    console.error("Error in PUT /api/facebook-leads/:id:", err);
+    res
+      .status(500)
+      .json({ message: "Failed to update lead", error: err.message });
   }
 });
 
@@ -48,20 +111,27 @@ router.get("/export", async (_req, res) => {
   try {
     const leads = await FacebookLead.find().sort({ createdAt: -1 }).lean();
 
-    // CSV header
-    let csv = "Name,Email,Source,Created At\n";
+    // CSV header (now includes phone, contact, facebook link)
+    let csv =
+      "Name,Email,Phone,Contact Preference,Facebook Link,Source,Created At\n";
 
     // CSV rows
     csv += leads
       .map((lead) => {
         const name = (lead.name || "").replace(/"/g, '""');
         const email = (lead.email || "").replace(/"/g, '""');
+        const phone = (lead.phone || "").replace(/"/g, '""');
+        const contactPreference = (lead.contactPreference || "")
+          .toString()
+          .replace(/"/g, '""');
+        const facebookLink = (lead.facebookLink || "").replace(/"/g, '""');
         const source = (lead.source || "").replace(/"/g, '""');
         const createdAt = lead.createdAt
           ? new Date(lead.createdAt).toISOString()
           : "";
+
         // wrap in quotes to be safe for commas
-        return `"${name}","${email}","${source}","${createdAt}"`;
+        return `"${name}","${email}","${phone}","${contactPreference}","${facebookLink}","${source}","${createdAt}"`;
       })
       .join("\n");
 
