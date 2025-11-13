@@ -1,12 +1,12 @@
 // api/routes/gameEntries.js
 import express from "express";
 import { connectDB } from "../config/db.js";
-import GameEntry from "../models/GameEntry.js";
+import GameEntry, {
+  ALLOWED_TYPES,
+  ALLOWED_METHODS,
+} from "../models/GameEntry.js";
 
 const router = express.Router();
-
-const ALLOWED_TYPES = ["freeplay", "deposit", "redeem"];
-const ALLOWED_METHODS = ["cashapp", "paypal", "chime", "venmo"];
 
 // Ensure DB for all routes here
 router.use(async (_req, res, next) => {
@@ -126,7 +126,6 @@ router.post("/", async (req, res) => {
     const bonus = Math.max(0, toNumber(bonusAmount, 0));
     const finalAmount = toNumber(
       amountFinal,
-      // fallback if not sent or 0
       base + (type === "deposit" ? (base * rate) / 100 : 0)
     );
 
@@ -159,25 +158,50 @@ router.post("/", async (req, res) => {
     return res.status(201).json({ message: "Entry saved", entry: doc });
   } catch (err) {
     console.error("❌ POST /api/game-entries error:", err);
+
+    // Surface Mongoose validation problems as 400 with details
+    if (err.name === "ValidationError") {
+      return res.status(400).json({ message: err.message });
+    }
+
     res.status(500).json({ message: "Failed to save entry" });
   }
 });
-
 /**
  * 🟢 GET /api/game-entries
- * Query (optional): playerName, type, from, to, limit
+ * Query (optional): username, playerName, type, from, to, limit
  * - date filters work on "YYYY-MM-DD" strings
  */
-// ...
 router.get("/", async (req, res) => {
   try {
-    const { playerName, type, from, to, limit, username } = req.query;
+    let { playerName, type, from, to, limit, username } = req.query;
 
     const filter = {};
 
-    if (username) filter.username = String(username); // 👈 NEW
+    // ✅ normalize username (handles ?username=&username=ani)
+    let normalizedUsername;
+    if (Array.isArray(username)) {
+      normalizedUsername = username
+        .map((u) => String(u).trim())
+        .filter(Boolean) // drop empties
+        .pop(); // last non-empty, e.g. "ani"
+    } else if (typeof username === "string") {
+      normalizedUsername = username.trim();
+    }
 
-    if (playerName) filter.playerName = String(playerName);
+    if (normalizedUsername) {
+      filter.username = normalizedUsername;
+    }
+
+    // (Optional) if this route is for logged-in user only, force username:
+    // if (!normalizedUsername) {
+    //   return res.status(400).json({ message: "username is required" });
+    // }
+
+    if (playerName) {
+      filter.playerName = String(playerName).trim();
+    }
+
     if (type && ALLOWED_TYPES.includes(String(type))) {
       filter.type = String(type);
     }
