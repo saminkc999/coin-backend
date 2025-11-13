@@ -110,5 +110,8 @@ router.get("/", async (req, res) => {
       .json({ message: "Failed to load sessions", error: err.message });
   }
 });
-
+router.get("/start", async (req, res) => {
+  const sessions = await LoginSession.find().sort({ createdAt: -1 }).lean();
+  res.json(sessions);
+});
 export default router;
