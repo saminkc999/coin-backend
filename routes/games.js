@@ -5,7 +5,37 @@ import Game from "../models/Game.js";
 import UserActivity from "../models/UserActivity.js";
 import { safeNum } from "../utils/numbers.js";
 
+// 👇 NEW: game entries model (create this file if you don't have it yet)
+import GameEntry, {
+  ENTRY_TYPES,
+  METHODS as ENTRY_METHODS,
+} from "../models/GameEntry.js";
+
 const router = express.Router();
+
+const ALLOWED_ENTRY_TYPES = ENTRY_TYPES || ["freeplay", "deposit", "redeem"];
+const ALLOWED_METHODS = ENTRY_METHODS || [
+  "cashapp",
+  "paypal",
+  "chime",
+  "venmo",
+];
+
+// small helpers
+const toNumber = (n, def = 0) => {
+  const v = Number(n);
+  return Number.isFinite(v) ? v : def;
+};
+const toISODateOrNull = (d) => {
+  if (!d) return null;
+  const v = new Date(d);
+  if (Number.isNaN(v.getTime())) return null;
+  return v.toISOString();
+};
+const toYMD = (d) => {
+  const iso = toISODateOrNull(d) || new Date().toISOString();
+  return iso.slice(0, 10); // "YYYY-MM-DD"
+};
 
 /**
  * NOTE:
@@ -200,15 +230,117 @@ router.post("/games/:id/add-moves", async (req, res) => {
     return res.status(500).json({ message: "Failed to update game moves" });
   }
 });
-// POST /api/games/:id/reset-recharge
-router.post("/:id/reset-recharge", async (req, res) => {
+
+// ✅ FIXED: POST /api/games/:id/reset-recharge
+router.post("/games/:id/reset-recharge", async (req, res) => {
   const { id } = req.params;
-  const game = await GameModel.findOneAndUpdate(
-    { id },
-    { $set: { coinsRecharged: 0, lastRechargeDate: null } },
-    { new: true }
-  );
-  res.json(game);
+
+  try {
+    await connectDB();
+
+    const game = await Game.findOneAndUpdate(
+      { id: Number(id) },
+      { $set: { coinsRecharged: 0, lastRechargeDate: null } },
+      { new: true }
+    ).lean();
+
+    if (!game) {
+      return res.status(404).json({ message: "Game not found" });
+    }
+
+    res.json(game);
+  } catch (err) {
+    console.error("POST /api/games/:id/reset-recharge error:", err);
+    res.status(500).json({ message: "Failed to reset recharge" });
+  }
+});
+
+/* ------------------------------------------------------------------
+ *  GAME ENTRIES (freeplay / deposit / redeem with method)
+ *  Used by GameEntryForm: POST /api/game-entries
+ * ------------------------------------------------------------------*/
+
+// POST /api/game-entries
+router.post("/game-entries", async (req, res) => {
+  try {
+    await connectDB();
+
+    const {
+      type,
+      method,
+      playerName,
+      gameName,
+      amountBase,
+      bonusRate,
+      bonusAmount,
+      amountFinal,
+      note,
+      date,
+    } = req.body;
+
+    // validate type
+    if (!ALLOWED_ENTRY_TYPES.includes(type)) {
+      return res.status(400).json({ message: "Invalid type" });
+    }
+
+    if (!playerName || !gameName) {
+      return res
+        .status(400)
+        .json({ message: "playerName and gameName are required" });
+    }
+
+    // method is required for deposit/redeem
+    if (type === "deposit" || type === "redeem") {
+      if (!method) {
+        return res
+          .status(400)
+          .json({ message: "method is required for deposit/redeem" });
+      }
+      if (!ALLOWED_METHODS.includes(method)) {
+        return res.status(400).json({ message: "Invalid method" });
+      }
+    }
+
+    const base = toNumber(amountBase);
+    const bonusR = toNumber(bonusRate);
+    const bonusAmt = toNumber(bonusAmount);
+    const finalAmt = toNumber(amountFinal || base + bonusAmt, 0);
+    const ymd = toYMD(date);
+
+    const doc = await GameEntry.create({
+      type,
+      method: type === "freeplay" ? undefined : method,
+      playerName: String(playerName).trim(),
+      gameName: String(gameName).trim(),
+      amountBase: base,
+      bonusRate: bonusR,
+      bonusAmount: bonusAmt,
+      amountFinal: finalAmt,
+      amount: finalAmt, // keep a direct amount field too if you like
+      note: note ? String(note).trim() : "",
+      date: ymd,
+    });
+
+    res.status(201).json(doc);
+  } catch (err) {
+    console.error("POST /api/game-entries error:", err);
+    res.status(500).json({ message: "Failed to save game entry" });
+  }
+});
+
+// GET /api/game-entries  (for tables, history, etc.)
+router.get("/game-entries", async (req, res) => {
+  try {
+    await connectDB();
+
+    // you can later add filters: ?playerName= & ?type= & ?date=
+    const entries = await GameEntry.find({}).sort({ createdAt: -1 }).lean();
+
+    res.json(entries);
+  } catch (err) {
+    console.error("GET /api/game-entries error:", err);
+    res.status(500).json({ message: "Failed to load game entries" });
+  }
 });
 
 export default router;
