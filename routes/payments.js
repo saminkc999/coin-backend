@@ -194,6 +194,7 @@ router.post("/recalc", async (_req, res) => {
 });
 
 /* ---------- PUT /api/payments/:id ---------- */
+/* Used by PaymentHistory.tsx for editing (mainly cashout rows) */
 router.put("/payments/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -206,6 +207,8 @@ router.put("/payments/:id", async (req, res) => {
       txType,
       totalPaid,
       totalCashout,
+      status,
+      type, // from frontend: deposit/redeem/freeplay/cashin/cashout
     } = req.body;
 
     const payment = await Payment.findOne({ id });
@@ -227,16 +230,29 @@ router.put("/payments/:id", async (req, res) => {
       payment.method = method;
     }
 
-    // txType
-    if (txType !== undefined) {
-      payment.txType = TX_TYPES.includes(txType) ? txType : "cashin";
+    // status (pending / paid / etc. – assuming you added field in model)
+    if (status !== undefined) {
+      payment.status = status;
     }
+
+    // Map "type" (from frontend) → txType (in model)
+    let nextTxType = payment.txType;
+    if (type) {
+      if (type === "redeem" || type === "cashout") nextTxType = "cashout";
+      else if (type === "deposit" || type === "cashin") nextTxType = "cashin";
+    } else if (txType) {
+      // direct override if provided and valid
+      if (TX_TYPES.includes(txType)) {
+        nextTxType = txType;
+      }
+    }
+    payment.txType = nextTxType;
 
     // date
     if (date !== undefined) {
       const d = toDateOrNull(date);
       if (!d) return res.status(400).json({ message: "Invalid date" });
-      payment.date = d; // schema will rebuild dateString
+      payment.date = d; // schema pre('validate') will rebuild dateString
     }
 
     // note & playerName
@@ -342,6 +358,26 @@ router.post("/recharge", async (req, res) => {
   } catch (err) {
     console.error("Error in POST /api/payments/recharge:", err);
     res.status(500).json({ message: "Failed to create payment" });
+  }
+});
+
+/* ---------- GET /api/payments/:id (single payment, debug / tools) ---------- */
+router.get("/payments/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const payment = await Payment.findOne({
+      $or: [{ id }, { _id: id }],
+    }).lean();
+
+    if (!payment) {
+      return res.status(404).json({ message: "Payment not found" });
+    }
+
+    res.json(payment);
+  } catch (err) {
+    console.error("GET /api/payments/:id error:", err);
+    res.status(500).json({ message: "Failed to load payment" });
   }
 });
 
