@@ -389,5 +389,70 @@ router.get("/", async (req, res) => {
     res.status(500).json({ message: "Failed to load entries" });
   }
 });
+/**
+ * 🟢 PATCH /api/game-entries/:id/clear-pending
+ *
+ * Used when a pending entry is fully cleared.
+ *
+ * - For our-tag redeem:
+ *     type = "redeem"
+ *     → set remainingPay = 0
+ *     → bump totalPaid (if you want)
+ *     → isPending = false
+ *
+ * - For player-tag deposit:
+ *     type = "deposit" & playerTag != ""
+ *     → set reduction = 0
+ *
+ * Optional body:
+ *   {
+ *     totalPaid?: number,   // override final totalPaid for redeem
+ *     reduction?: number    // override reduction for player-tag (usually 0)
+ *   }
+ */
+router.patch("/:id/clear-pending", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { totalPaid, reduction } = req.body || {};
+
+    const entry = await GameEntry.findById(id);
+    if (!entry) {
+      return res.status(404).json({ message: "Entry not found" });
+    }
+
+    const update = {};
+
+    // 🔹 our-tag redeem flow
+    if (entry.type === "redeem") {
+      const currentPaid = toNumber(entry.totalPaid, 0);
+      const currentRemaining = toNumber(entry.remainingPay, 0);
+
+      // if frontend sends a specific totalPaid, use it; otherwise auto-add remaining
+      const incomingPaid = toNumber(totalPaid, NaN);
+      const newTotalPaid = Number.isFinite(incomingPaid)
+        ? incomingPaid
+        : currentPaid + currentRemaining;
+
+      update.totalPaid = newTotalPaid;
+      update.remainingPay = 0;
+      update.isPending = false;
+    }
+
+    // 🔹 player-tag deposit flow (clear reduction)
+    if (entry.type === "deposit" && entry.playerTag) {
+      const newReduction = toNumber(reduction, 0); // usually 0
+      update.reduction = newReduction;
+    }
+
+    const updated = await GameEntry.findByIdAndUpdate(id, update, {
+      new: true,
+    }).lean();
+
+    return res.json({ message: "Pending cleared", entry: updated });
+  } catch (err) {
+    console.error("❌ PATCH /api/game-entries/:id/clear-pending error:", err);
+    res.status(500).json({ message: "Failed to clear pending" });
+  }
+});
 
 export default router;
