@@ -48,7 +48,13 @@ function normalizeDateString(d) {
  *   method?: "cashapp" | "paypal" | "chime" | "venmo",
  *   username: string,
  *   createdBy?: string,
- *   playerName: string,
+ *
+ *   // EITHER:
+ *   //   - Our tag flow:     playerName (required), playerTag optional
+ *   //   - Player tag flow:  playerTag (required),  playerName optional
+ *   playerName?: string,
+ *   playerTag?: string,
+ *
  *   gameName: string,
  *   amountBase: number,
  *   bonusRate?: number,
@@ -57,9 +63,16 @@ function normalizeDateString(d) {
  *   amount?: number,
  *   note?: string,
  *   date?: string | Date,
+ *
+ *   // Redeem / credit tracking (our tag flow)
  *   totalPaid?: number,
  *   totalCashout?: number,
- *   remainingPay?: number
+ *   remainingPay?: number,
+ *   isPending?: boolean,
+ *
+ *   // Player tag flow
+ *   reduction?: number,  // amountBase - totalCashout
+ *   extraMoney?: number  // for player-tag extra money
  * }
  */
 router.post("/", async (req, res) => {
@@ -69,7 +82,10 @@ router.post("/", async (req, res) => {
       method,
       username,
       createdBy,
+
       playerName,
+      playerTag,
+
       gameName,
 
       amountBase,
@@ -84,6 +100,9 @@ router.post("/", async (req, res) => {
       totalPaid,
       totalCashout,
       remainingPay,
+      isPending,
+      reduction,
+      extraMoney,
     } = req.body;
 
     // basic validations
@@ -95,8 +114,16 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ message: "username is required" });
     }
 
-    if (!playerName || typeof playerName !== "string" || !playerName.trim()) {
-      return res.status(400).json({ message: "playerName is required" });
+    // ✅ Allow either playerName OR playerTag
+    const hasPlayerName =
+      typeof playerName === "string" && playerName.trim().length > 0;
+    const hasPlayerTag =
+      typeof playerTag === "string" && playerTag.trim().length > 0;
+
+    if (!hasPlayerName && !hasPlayerTag) {
+      return res.status(400).json({
+        message: "Either playerName or playerTag is required",
+      });
     }
 
     if (!gameName || typeof gameName !== "string" || !gameName.trim()) {
@@ -129,6 +156,19 @@ router.post("/", async (req, res) => {
       base + (type === "deposit" ? (base * rate) / 100 : 0)
     );
 
+    // normalize totals
+    const totalCashoutNum = toNumber(totalCashout, 0);
+    const remainingPayNum = toNumber(remainingPay, 0);
+    const totalPaidNum = toNumber(totalPaid, 0);
+
+    // 🔻 For player-tag flow: reduction = amountBase - totalCashout (if not provided)
+    const reductionNum = toNumber(
+      reduction,
+      Math.max(0, base - totalCashoutNum)
+    );
+
+    const extraMoneyNum = toNumber(extraMoney, 0);
+
     const doc = await GameEntry.create({
       type,
       method: normalizedMethod,
@@ -136,7 +176,10 @@ router.post("/", async (req, res) => {
       username: username.trim(),
       createdBy: (createdBy || username).trim(),
 
-      playerName: playerName.trim(),
+      // keep both; schema allows playerName optional, playerTag optional
+      playerName: hasPlayerName ? playerName.trim() : "",
+      playerTag: hasPlayerTag ? playerTag.trim() : "",
+
       gameName: String(gameName).trim(),
 
       amountBase: base,
@@ -150,9 +193,18 @@ router.post("/", async (req, res) => {
 
       date: normalizeDateString(date),
 
-      totalPaid: toNumber(totalPaid, 0),
-      totalCashout: toNumber(totalCashout, 0),
-      remainingPay: toNumber(remainingPay, 0),
+      totalPaid: totalPaidNum,
+      totalCashout: totalCashoutNum,
+      remainingPay: remainingPayNum,
+
+      // our-tag redeem pending flag
+      isPending: type === "redeem" ? Boolean(isPending) : false,
+
+      // player-tag reduction
+      reduction: reductionNum,
+
+      // player-tag extra money
+      extraMoney: extraMoneyNum,
     });
 
     return res.status(201).json({ message: "Entry saved", entry: doc });
@@ -167,14 +219,123 @@ router.post("/", async (req, res) => {
     res.status(500).json({ message: "Failed to save entry" });
   }
 });
+
+/**
+ * 🟢 GET /api/game-entries/pending-by-tag
+ * Query: playerTag (required), username (optional)
+ *
+ * Used by PLAYER TAG mode:
+ * - finds the latest redeem for this tag with remainingPay > 0
+ * - returns remainingPay so frontend can auto-fill cost amount
+ *
+ * Example:
+ *   GET /api/game-entries/pending-by-tag?playerTag=@saga&username=ani
+ */
+router.get("/pending-by-tag", async (req, res) => {
+  try {
+    let { playerTag, username } = req.query;
+
+    if (!playerTag || !String(playerTag).trim()) {
+      return res.status(400).json({ message: "playerTag is required" });
+    }
+
+    const tag = String(playerTag).trim();
+
+    const filter = {
+      playerTag: tag,
+      type: "redeem",
+      // only still pending ones
+      remainingPay: { $gt: 0 },
+    };
+
+    // optionally scope by username (if you want per-admin/user separation)
+    if (username && String(username).trim()) {
+      filter.username = String(username).trim();
+    }
+
+    const doc = await GameEntry.findOne(filter).sort({ createdAt: -1 }).lean();
+
+    if (!doc) {
+      return res
+        .status(404)
+        .json({ message: "No pending redeem found for this player tag" });
+    }
+
+    res.json({
+      playerTag: tag,
+      username: doc.username,
+      gameName: doc.gameName ?? null,
+      remainingPay: doc.remainingPay ?? 0,
+      totalCashout: doc.totalCashout ?? 0,
+      totalPaid: doc.totalPaid ?? 0,
+      entryId: doc._id,
+      createdAt: doc.createdAt,
+      date: doc.date,
+    });
+  } catch (err) {
+    console.error("❌ GET /api/game-entries/pending-by-tag error:", err);
+    res.status(500).json({ message: "Failed to lookup player tag" });
+  }
+});
+
+/* ---------------------------------------
+   🟢 GET /api/game-entries/pending
+   ALL pending payments:
+
+   Our-tag redeem:
+     - type = "redeem"
+     - remainingPay > 0
+     - (optional) isPending = true
+
+   Player-tag deposit:
+     - type = "deposit"
+     - playerTag != ""
+     - reduction > 0
+
+   Optional query:
+     ?username=ani  → filter only that user’s entries
+---------------------------------------- */
+router.get("/pending", async (req, res) => {
+  try {
+    const { username } = req.query;
+
+    const query = {
+      $or: [
+        // our-tag pending redeems
+        {
+          type: "redeem",
+          remainingPay: { $gt: 0 },
+        },
+        // player-tag deposits with reduction
+        {
+          type: "deposit",
+          playerTag: { $ne: "" },
+          reduction: { $gt: 0 },
+        },
+      ],
+    };
+
+    if (username && String(username).trim()) {
+      query.username = String(username).trim();
+    }
+
+    const docs = await GameEntry.find(query).sort({ createdAt: -1 }).lean();
+
+    return res.json(docs);
+  } catch (err) {
+    console.error("❌ GET /api/game-entries/pending error:", err);
+    res.status(500).json({ message: "Failed to load pending entries" });
+  }
+});
+
 /**
  * 🟢 GET /api/game-entries
- * Query (optional): username, playerName, type, from, to, limit
+ * Query (optional): username, playerName, playerTag, type, from, to, limit
  * - date filters work on "YYYY-MM-DD" strings
  */
 router.get("/", async (req, res) => {
   try {
-    let { playerName, type, from, to, limit, username } = req.query;
+    let { playerName, playerTag, type, from, to, limit, username } = req.query;
 
     const filter = {};
 
@@ -193,13 +354,13 @@ router.get("/", async (req, res) => {
       filter.username = normalizedUsername;
     }
 
-    // (Optional) if this route is for logged-in user only, force username:
-    // if (!normalizedUsername) {
-    //   return res.status(400).json({ message: "username is required" });
-    // }
-
     if (playerName) {
       filter.playerName = String(playerName).trim();
+    }
+
+    // allow filtering by playerTag
+    if (playerTag) {
+      filter.playerTag = String(playerTag).trim();
     }
 
     if (type && ALLOWED_TYPES.includes(String(type))) {

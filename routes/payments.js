@@ -1,384 +1,295 @@
-// api/routes/payments.js
+// api/routes/gameEntries.js
 import express from "express";
-import { nanoid } from "nanoid";
-
 import { connectDB } from "../config/db.js";
-import Payment, { METHODS, TX_TYPES } from "../models/Payment.js";
-import { computeTotals } from "../utils/totals.js";
+import GameEntry, {
+  ALLOWED_TYPES,
+  ALLOWED_METHODS,
+} from "../models/GameEntry.js";
 
 const router = express.Router();
 
-/* ---------- Helpers ---------- */
-const toDateOrNull = (d) => {
-  if (!d) return null;
-  const parsed = new Date(d);
-  if (!Number.isNaN(parsed.getTime())) return parsed; // ISO or parseable
-  // If strictly YYYY-MM-DD, build a Date at local midnight
-  if (/^\d{4}-\d{2}-\d{2}$/.test(String(d))) {
-    const [y, m, day] = String(d).split("-").map(Number);
-    return new Date(y, m - 1, day);
-  }
-  return null;
-};
-
-const normalizeToDate = (d) => toDateOrNull(d) || new Date();
-
-const parseMoney = (v, { allowZero = false } = {}) => {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return null;
-  if (!allowZero && n <= 0) return null;
-  if (allowZero && n < 0) return null;
-  return Math.round(n * 100) / 100;
-};
-
-/* ---------- Ensure DB for every route here ---------- */
-router.use(async (_req, _res, next) => {
+// Ensure DB for all routes here
+router.use(async (_req, res, next) => {
   try {
     await connectDB();
-  } catch (e) {
-    console.error("DB connect error (payments):", e);
+    next();
+  } catch (err) {
+    console.error("❌ DB connect (gameEntries) failed:", err);
+    res.status(500).json({ message: "Database connection failed" });
   }
-  next();
 });
 
-/* ---------- GET /api/payments?date=YYYY-MM-DD ---------- */
-/* If ?date is provided, match that day via dateString */
-router.get("/payments", async (req, res) => {
-  try {
-    const { date } = req.query;
-    const filter = {};
-    if (date) {
-      // dateString is set in the model pre-validate hook
-      filter.dateString = String(date);
+// helpers
+function toNumber(n, def = 0) {
+  if (n === undefined || n === null || n === "") return def;
+  const v = Number(n);
+  return Number.isFinite(v) ? v : def;
+}
+
+// Normalize any date input to "YYYY-MM-DD" string (or undefined)
+function normalizeDateString(d) {
+  if (!d) return undefined;
+  if (typeof d === "string") {
+    // already "YYYY-MM-DD" or ISO -> just slice first 10
+    if (/^\d{4}-\d{2}-\d{2}/.test(d)) {
+      return d.slice(0, 10);
     }
-    const payments = await Payment.find(filter).sort({ createdAt: -1 }).lean();
-    res.json(payments);
-  } catch (err) {
-    console.error("GET /api/payments error:", err);
-    res.status(500).json({ message: "Failed to load payments" });
   }
-});
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return undefined;
+  return dt.toISOString().slice(0, 10);
+}
 
-/* ---------- GET /api/payments/cashout ---------- */
-router.get("/payments/cashout", async (_req, res) => {
+/**
+ * 🟢 POST /api/game-entries
+ * Body (per game, matches GameEntryForm.tsx):
+ * {
+ *   type: "freeplay" | "deposit" | "redeem",
+ *   method?: "cashapp" | "paypal" | "chime" | "venmo",
+ *   username: string,
+ *   createdBy?: string,
+ *
+ *   // EITHER:
+ *   //   - Our tag flow:     playerName (required), playerTag optional
+ *   //   - Player tag flow:  playerTag (required),  playerName optional
+ *   playerName?: string,
+ *   playerTag?: string,
+ *
+ *   gameName: string,
+ *   amountBase: number,
+ *   bonusRate?: number,
+ *   bonusAmount?: number,
+ *   amountFinal: number,
+ *   amount?: number,
+ *   note?: string,
+ *   date?: string | Date,
+ *
+ *   // Redeem / credit tracking (our tag flow)
+ *   totalPaid?: number,
+ *   totalCashout?: number,
+ *   remainingPay?: number,
+ *   isPending?: boolean, // for redeem entries
+ *
+ *   // Player tag flow
+ *   reduction?: number  // amountBase - totalCashout
+ * }
+ */
+router.post("/", async (req, res) => {
   try {
-    const cashouts = await Payment.find({ txType: "cashout" })
-      .sort({ createdAt: -1 })
-      .lean();
-    res.json(cashouts);
-  } catch (err) {
-    console.error("GET /api/payments/cashout error:", err);
-    res.status(500).json({ message: "Failed to load cashout payments" });
-  }
-});
-
-/* ---------- GET /api/totals ---------- */
-router.get("/totals", async (_req, res) => {
-  try {
-    const totals = await computeTotals();
-    res.json(totals);
-  } catch (err) {
-    console.error("GET /api/totals error:", err);
-    res.status(500).json({ message: "Failed to compute totals" });
-  }
-});
-
-/* ---------- POST /api/payments/cashin ---------- */
-/* body: { amount, method, note?, playerName?, date? } */
-router.post("/payments/cashin", async (req, res) => {
-  try {
-    const { amount, method, note, playerName, date } = req.body;
-
-    const amt = parseMoney(amount);
-    if (amt === null)
-      return res.status(400).json({ message: "Invalid amount" });
-
-    if (!METHODS.includes(method)) {
-      return res.status(400).json({ message: "Invalid method" });
-    }
-
-    const payment = await Payment.create({
-      id: nanoid(),
-      amount: amt,
-      method,
-      txType: "cashin",
-      note: note?.trim() || "",
-      playerName: (playerName || "").trim(),
-      date: normalizeToDate(date), // pass Date; model sets dateString
-    });
-
-    const totals = await computeTotals();
-    res.status(201).json({ ok: true, payment, totals });
-  } catch (err) {
-    console.error("POST /api/payments/cashin error:", err);
-    res.status(500).json({ message: "Failed to create cash-in payment" });
-  }
-});
-
-/* ---------- POST /api/payments/cashout ---------- */
-/* body: { amount, method, playerName, totalPaid?, totalCashout?, date? } */
-router.post("/payments/cashout", async (req, res) => {
-  try {
-    const { amount, method, playerName, totalPaid, totalCashout, date } =
-      req.body;
-
-    const amt = parseMoney(amount);
-    if (amt === null)
-      return res.status(400).json({ message: "Invalid amount" });
-
-    if (!METHODS.includes(method)) {
-      return res.status(400).json({ message: "Invalid method" });
-    }
-
-    if (!playerName || typeof playerName !== "string") {
-      return res.status(400).json({ message: "playerName is required" });
-    }
-
-    const tPaid =
-      totalPaid !== undefined
-        ? parseMoney(totalPaid, { allowZero: true })
-        : undefined;
-    const tCashout =
-      totalCashout !== undefined
-        ? parseMoney(totalCashout, { allowZero: true })
-        : undefined;
-
-    if (totalPaid !== undefined && tPaid === null) {
-      return res.status(400).json({ message: "Invalid totalPaid" });
-    }
-    if (totalCashout !== undefined && tCashout === null) {
-      return res.status(400).json({ message: "Invalid totalCashout" });
-    }
-
-    const payment = await Payment.create({
-      id: nanoid(),
-      amount: amt,
-      method,
-      txType: "cashout",
-      note: "",
-      playerName: playerName.trim(),
-      totalPaid: tPaid ?? 0,
-      totalCashout: tCashout ?? 0,
-      date: normalizeToDate(date),
-    });
-
-    const totals = await computeTotals();
-    res.status(201).json({ ok: true, payment, totals });
-  } catch (err) {
-    console.error("POST /api/payments/cashout error:", err);
-    res.status(500).json({ message: "Failed to create cash-out payment" });
-  }
-});
-
-/* ---------- POST /api/reset ---------- */
-router.post("/reset", async (_req, res) => {
-  try {
-    await Payment.deleteMany({});
-    const totals = { cashapp: 0, paypal: 0, chime: 0 };
-    res.json({ ok: true, totals });
-  } catch (err) {
-    console.error("POST /api/reset error:", err);
-    res.status(500).json({ message: "Failed to reset payments" });
-  }
-});
-
-/* ---------- POST /api/recalc ---------- */
-router.post("/recalc", async (_req, res) => {
-  try {
-    const totals = await computeTotals();
-    res.json({ ok: true, totals });
-  } catch (err) {
-    console.error("POST /api/recalc error:", err);
-    res.status(500).json({ message: "Failed to recalc totals" });
-  }
-});
-
-/* ---------- PUT /api/payments/:id ---------- */
-/* Used by PaymentHistory.tsx for editing (mainly cashout rows) */
-router.put("/payments/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
     const {
-      amount,
+      type,
       method,
-      note,
+      username,
+      createdBy,
+
       playerName,
+      playerTag,
+
+      gameName,
+
+      amountBase,
+      amount, // optional raw
+      bonusRate,
+      bonusAmount,
+      amountFinal,
+
+      note,
       date,
-      txType,
+
       totalPaid,
       totalCashout,
-      status,
-      type, // from frontend: deposit/redeem/freeplay/cashin/cashout
+      remainingPay,
+      reduction,
+
+      // NEW: pending flag (for redeem)
+      isPending,
     } = req.body;
 
-    const payment = await Payment.findOne({ id });
-    if (!payment) return res.status(404).json({ message: "Payment not found" });
-
-    // amount
-    if (amount !== undefined) {
-      const amt = parseMoney(amount);
-      if (amt === null)
-        return res.status(400).json({ message: "Invalid amount" });
-      payment.amount = amt;
+    // basic validations
+    if (!type || !ALLOWED_TYPES.includes(type)) {
+      return res.status(400).json({ message: "Invalid type" });
     }
 
-    // method
-    if (method !== undefined) {
-      if (!METHODS.includes(method)) {
+    if (!username || typeof username !== "string" || !username.trim()) {
+      return res.status(400).json({ message: "username is required" });
+    }
+
+    // ✅ Allow either playerName OR playerTag
+    const hasPlayerName =
+      typeof playerName === "string" && playerName.trim().length > 0;
+    const hasPlayerTag =
+      typeof playerTag === "string" && playerTag.trim().length > 0;
+
+    if (!hasPlayerName && !hasPlayerTag) {
+      return res.status(400).json({
+        message: "Either playerName or playerTag is required",
+      });
+    }
+
+    if (!gameName || typeof gameName !== "string" || !gameName.trim()) {
+      return res.status(400).json({ message: "gameName is required" });
+    }
+
+    // method validation for deposit/redeem
+    let normalizedMethod = undefined;
+    if (type === "deposit" || type === "redeem") {
+      if (!method) {
+        return res.status(400).json({ message: "method is required" });
+      }
+      if (!ALLOWED_METHODS.includes(String(method))) {
         return res.status(400).json({ message: "Invalid method" });
       }
-      payment.method = method;
+      normalizedMethod = String(method);
     }
 
-    // status (pending / paid / etc. – assuming you added field in model)
-    if (status !== undefined) {
-      payment.status = status;
+    const base = toNumber(amountBase ?? amount, NaN);
+    if (!Number.isFinite(base) || base < 0) {
+      return res
+        .status(400)
+        .json({ message: "amountBase / amount must be >= 0" });
     }
 
-    // Map "type" (from frontend) → txType (in model)
-    let nextTxType = payment.txType;
-    if (type) {
-      if (type === "redeem" || type === "cashout") nextTxType = "cashout";
-      else if (type === "deposit" || type === "cashin") nextTxType = "cashin";
-    } else if (txType) {
-      // direct override if provided and valid
-      if (TX_TYPES.includes(txType)) {
-        nextTxType = txType;
+    const rate = Math.max(0, toNumber(bonusRate, 0));
+    const bonus = Math.max(0, toNumber(bonusAmount, 0));
+    const finalAmount = toNumber(
+      amountFinal,
+      base + (type === "deposit" ? (base * rate) / 100 : 0)
+    );
+
+    // normalize totals
+    const totalCashoutNum = toNumber(totalCashout, 0);
+    const remainingPayNum = toNumber(remainingPay, 0);
+    const totalPaidNum = toNumber(totalPaid, 0);
+
+    // 🔻 For player-tag flow: reduction = amountBase - totalCashout (if not provided)
+    const reductionNum = toNumber(
+      reduction,
+      Math.max(0, base - totalCashoutNum)
+    );
+
+    const doc = await GameEntry.create({
+      type,
+      method: normalizedMethod,
+
+      username: username.trim(),
+      createdBy: (createdBy || username).trim(),
+
+      // keep both; schema allows playerName optional, playerTag optional
+      playerName: hasPlayerName ? playerName.trim() : "",
+      playerTag: hasPlayerTag ? playerTag.trim() : "",
+
+      gameName: String(gameName).trim(),
+
+      amountBase: base,
+      bonusRate: type === "deposit" ? rate : 0,
+      bonusAmount: type === "deposit" ? bonus : 0,
+      amountFinal: finalAmount,
+
+      amount: toNumber(amount, undefined),
+
+      note: note ? String(note) : "",
+
+      date: normalizeDateString(date),
+
+      totalPaid: totalPaidNum,
+      totalCashout: totalCashoutNum,
+      remainingPay: remainingPayNum,
+
+      reduction: reductionNum,
+
+      // save pending flag (mostly meaningful for redeem)
+      isPending: !!isPending,
+    });
+
+    return res.status(201).json({ message: "Entry saved", entry: doc });
+  } catch (err) {
+    console.error("❌ POST /api/game-entries error:", err);
+
+    // Surface Mongoose validation problems as 400 with details
+    if (err.name === "ValidationError") {
+      return res.status(400).json({ message: err.message });
+    }
+
+    res.status(500).json({ message: "Failed to save entry" });
+  }
+});
+
+/**
+ * 🟢 GET /api/game-entries
+ * Query (optional): username, playerName, playerTag, type, from, to, limit, isPending
+ * - date filters work on "YYYY-MM-DD" strings
+ */
+router.get("/", async (req, res) => {
+  try {
+    let { playerName, playerTag, type, from, to, limit, username, isPending } =
+      req.query;
+
+    const filter = {};
+
+    // ✅ normalize username (handles ?username=&username=ani)
+    let normalizedUsername;
+    if (Array.isArray(username)) {
+      normalizedUsername = username
+        .map((u) => String(u).trim())
+        .filter(Boolean) // drop empties
+        .pop(); // last non-empty, e.g. "ani"
+    } else if (typeof username === "string") {
+      normalizedUsername = username.trim();
+    }
+
+    if (normalizedUsername) {
+      filter.username = normalizedUsername;
+    }
+
+    if (playerName) {
+      filter.playerName = String(playerName).trim();
+    }
+
+    // allow filtering by playerTag
+    if (playerTag) {
+      filter.playerTag = String(playerTag).trim();
+    }
+
+    if (type && ALLOWED_TYPES.includes(String(type))) {
+      filter.type = String(type);
+    }
+
+    // NEW: filter by pending status (isPending=true/false)
+    if (typeof isPending === "string") {
+      const v = isPending.toLowerCase();
+      if (v === "true" || v === "false") {
+        filter.isPending = v === "true";
       }
     }
-    payment.txType = nextTxType;
 
-    // date
-    if (date !== undefined) {
-      const d = toDateOrNull(date);
-      if (!d) return res.status(400).json({ message: "Invalid date" });
-      payment.date = d; // schema pre('validate') will rebuild dateString
+    const fromStr = normalizeDateString(from);
+    const toStr = normalizeDateString(to);
+
+    if (fromStr || toStr) {
+      filter.date = {};
+      if (fromStr) filter.date.$gte = fromStr;
+      if (toStr) filter.date.$lte = toStr;
     }
 
-    // note & playerName
-    if (note !== undefined) payment.note = note?.trim() || "";
-    if (playerName !== undefined) payment.playerName = playerName?.trim() || "";
+    const lim = Math.min(toNumber(limit, 30), 200);
 
-    // totals (cashout extras)
-    if (totalPaid !== undefined) {
-      const tPaid = parseMoney(totalPaid, { allowZero: true });
-      if (tPaid === null)
-        return res.status(400).json({ message: "Invalid totalPaid" });
-      payment.totalPaid = tPaid;
-    }
+    const docs = await GameEntry.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(lim)
+      .lean();
 
-    if (totalCashout !== undefined) {
-      const tCashout = parseMoney(totalCashout, { allowZero: true });
-      if (tCashout === null)
-        return res.status(400).json({ message: "Invalid totalCashout" });
-      payment.totalCashout = tCashout;
-    }
-
-    await payment.save();
-    const totals = await computeTotals();
-    res.json({ ok: true, payment, totals });
+    res.json(docs);
   } catch (err) {
-    console.error("PUT /api/payments/:id error:", err);
-    res.status(500).json({ message: "Failed to update payment" });
+    console.error("❌ GET /api/game-entries error:", err);
+    res.status(500).json({ message: "Failed to load entries" });
   }
 });
+router.patch("/payments/:id", async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body; // "completed", "partial", etc.
 
-/* ---------- DELETE /api/payments/:id ---------- */
-router.delete("/payments/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const removed = await Payment.findOneAndDelete({ id }).lean();
-    if (!removed) return res.status(404).json({ message: "Payment not found" });
+  const doc = await Payment.findByIdAndUpdate(id, { status }, { new: true });
 
-    const totals = await computeTotals();
-    res.json({ ok: true, removed, totals });
-  } catch (err) {
-    console.error("DELETE /api/payments/:id error:", err);
-    res.status(500).json({ message: "Failed to delete payment" });
-  }
+  res.json(doc);
 });
-
-/* ---------- POST /api/recharge (unified) ---------- */
-/* body: { amount, method, txType, note?, playerName?, totalPaid?, totalCashout?, date? } */
-router.post("/recharge", async (req, res) => {
-  try {
-    const {
-      amount,
-      method,
-      txType,
-      note,
-      playerName,
-      totalPaid,
-      totalCashout,
-      date,
-    } = req.body;
-
-    const amt = parseMoney(amount);
-    if (amt === null)
-      return res.status(400).json({ message: "Invalid amount" });
-
-    if (!METHODS.includes(method)) {
-      return res.status(400).json({ message: "Invalid method" });
-    }
-
-    const normalizedType = TX_TYPES.includes(txType) ? txType : "cashin";
-    const payload = {
-      id: nanoid(),
-      amount: amt,
-      method,
-      txType: normalizedType,
-      note: note?.trim() || "",
-      playerName: normalizedType === "cashin" ? (playerName || "").trim() : "",
-      date: normalizeToDate(date),
-    };
-
-    if (normalizedType === "cashout") {
-      const tPaid =
-        totalPaid !== undefined
-          ? parseMoney(totalPaid, { allowZero: true })
-          : undefined;
-      const tCashout =
-        totalCashout !== undefined
-          ? parseMoney(totalCashout, { allowZero: true })
-          : undefined;
-
-      if (totalPaid !== undefined && tPaid === null) {
-        return res.status(400).json({ message: "Invalid totalPaid" });
-      }
-      if (totalCashout !== undefined && tCashout === null) {
-        return res.status(400).json({ message: "Invalid totalCashout" });
-      }
-      if (tPaid !== undefined) payload.totalPaid = tPaid;
-      if (tCashout !== undefined) payload.totalCashout = tCashout;
-    }
-
-    const payment = await Payment.create(payload);
-    const totals = await computeTotals();
-    res.status(201).json({ ok: true, payment, totals });
-  } catch (err) {
-    console.error("Error in POST /api/payments/recharge:", err);
-    res.status(500).json({ message: "Failed to create payment" });
-  }
-});
-
-/* ---------- GET /api/payments/:id (single payment, debug / tools) ---------- */
-router.get("/payments/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const payment = await Payment.findOne({
-      $or: [{ id }, { _id: id }],
-    }).lean();
-
-    if (!payment) {
-      return res.status(404).json({ message: "Payment not found" });
-    }
-
-    res.json(payment);
-  } catch (err) {
-    console.error("GET /api/payments/:id error:", err);
-    res.status(500).json({ message: "Failed to load payment" });
-  }
-});
-
 export default router;
