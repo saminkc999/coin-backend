@@ -83,26 +83,54 @@ router.post("/end", async (req, res) => {
 
 /**
  * 🧾 GET /api/logins
- * Optional query: ?username=admin
+ * Optional:
+ *   ?username=admin   -> filter by username
+ *   ?latest=1         -> only latest session (per username filter)
  * Used by AdminUserActivityTable
  */
 router.get("/", async (req, res) => {
   try {
-    const { username } = req.query;
+    const { username, latest } = req.query;
 
     const filter = {};
     if (username && typeof username === "string") {
       filter.username = username;
     }
 
-    const sessions = await LoginSession.find(filter)
-      .sort({ createdAt: -1 })
-      .limit(200)
-      .lean();
+    let query = LoginSession.find(filter).sort({ signInAt: -1 });
 
-    console.log("📜 /api/logins =>", filter, sessions.length);
+    // If latest=1, only return the most recent session
+    if (latest === "1" || latest === "true") {
+      query = query.limit(1);
+    } else {
+      query = query.limit(200);
+    }
 
-    res.json(sessions);
+    const sessions = await query.lean();
+
+    const formatted = sessions.map((s) => ({
+      _id: String(s._id),
+      username: s.username,
+      signInAt: s.signInAt ? new Date(s.signInAt).toISOString() : null,
+      signOutAt: s.signOutAt ? new Date(s.signOutAt).toISOString() : null,
+      createdAt:
+        s.createdAt && s.createdAt.toISOString
+          ? s.createdAt.toISOString()
+          : undefined,
+      updatedAt:
+        s.updatedAt && s.updatedAt.toISOString
+          ? s.updatedAt.toISOString()
+          : undefined,
+    }));
+
+    console.log(
+      "📜 GET /api/logins => filter:",
+      filter,
+      "count:",
+      formatted.length
+    );
+
+    res.json(formatted);
   } catch (err) {
     console.error("Error in GET /api/logins:", err);
     res
@@ -110,8 +138,44 @@ router.get("/", async (req, res) => {
       .json({ message: "Failed to load sessions", error: err.message });
   }
 });
-router.get("/start", async (req, res) => {
-  const sessions = await LoginSession.find().sort({ createdAt: -1 }).lean();
-  res.json(sessions);
+router.get("/:username", async (req, res) => {
+  try {
+    const { username } = req.params;
+
+    if (!username) {
+      return res.status(400).json({ message: "username is required" });
+    }
+
+    const session = await LoginSession.findOne({ username })
+      .sort({ signInAt: -1 }) // latest session
+      .lean();
+
+    if (!session) {
+      return res
+        .status(404)
+        .json({ message: "No session found for this user" });
+    }
+
+    const formatted = {
+      _id: String(session._id),
+      username: session.username,
+      signInAt: session.signInAt
+        ? new Date(session.signInAt).toISOString()
+        : null,
+      signOutAt: session.signOutAt
+        ? new Date(session.signOutAt).toISOString()
+        : null,
+      createdAt: session.createdAt?.toISOString?.() ?? undefined,
+      updatedAt: session.updatedAt?.toISOString?.() ?? undefined,
+    };
+
+    res.json(formatted);
+  } catch (err) {
+    console.error("Error in GET /api/logins/:username:", err);
+    res
+      .status(500)
+      .json({ message: "Failed to load user session", error: err.message });
+  }
 });
+
 export default router;
